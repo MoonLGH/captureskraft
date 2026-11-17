@@ -1,0 +1,27 @@
+dengan color pallet 
+- CSV
+
+fa699e,ff9fc7,ffffff,ffe7f0,4298ed
+
+- With #
+
+#fa699e, #ff9fc7, #ffffff, #ffe7f0, #4298ed
+
+- Array
+
+["fa699e","ff9fc7","ffffff","ffe7f0","4298ed"]
+
+- Object
+
+{"Rose Kiss":"fa699e","Baby Pink":"ff9fc7","White":"ffffff","Lavender Blush":"ffe7f0","Cloudy Sky":"4298ed"}
+
+color pallet ini di gunakan secara global di aplikasi ini
+
+aku mau buat aplikasi untuk bisnis usaha kecil kecilan ku dengan nama "Capturs Photobooth", aku mau buat software yang mirip dengan https://captura.id/, menggunakan electronjs dan react di dalamnya
+
+dengan sistem all in one membolehkan app ini di pakai sama user (sebagai sistem phtoobooth) dan admin
+
+user berarti ini akan di taruh sebagai ui yang tampil di layar sentuh di booth yang terhubung dengan camera dll, yang interaktif dengan user dan mudah di mengerti, (dalam kondisi ini keyboard sudah di cabut, dan akan full touch screen)
+
+dan admin adalah ketika user berada di main menu dan menggunakan keyboard lalu mengklik ctrl+z maka akan terbuka admin menu yang harus memasukan password, untuk saat ini buat saja passwordnya "admin", admin menu ini membolehkan admin untuk mengatur mongodb database, ftp database dll
+dengan in mind adalah kemungkinan nanti kita akan membuat website hosted by vercel dimana kita akan masukin config yang sama dengan admin toko x dan dapat melihat penghasilan dll
