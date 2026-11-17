@@ -105,6 +105,10 @@ export function parseLegacyBoothFrame(value: string | undefined): BoothFrame | n
         width: Number(slot.width) * width / 100,
         height: Number(slot.height) * height / 100,
         rotation: 0,
+        photoIndex: index,
+        imageZoom: 1,
+        imageOffsetX: 0,
+        imageOffsetY: 0,
       }
       return Object.values(converted).every((item) => typeof item === 'string' || Number.isFinite(item))
         && converted.width > 0 && converted.height > 0

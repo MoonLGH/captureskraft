@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Download, ImagePlus, Trash2, Upload } from 'lucide-react'
 import { FrameEditor } from './components/FrameEditor'
-import { createFramePreset, createId, parseFramePreset, type BoothFrame, type BoothFramesSettings } from './boothFrames'
+import { createFramePreset, createId, getFramePhotoIndexes, parseFramePreset, type BoothFrame, type BoothFramesSettings } from './boothFrames'
 
 type BoothFramesPanelProps = {
   settings: BoothFramesSettings
@@ -102,7 +102,7 @@ export function BoothFramesPanel({ settings, onChange, onSave }: BoothFramesPane
   return (
     <section className="booth-frames-panel">
       <div className="admin-title-row">
-        <div><div className="eyebrow">FRAME FOTO PER BOOTH</div><h2>Booth Frames</h2><p>Kelola banyak frame. Tiap frame menyimpan jumlah foto dan posisi slotnya sendiri.</p></div>
+        <div><div className="eyebrow">FRAME FOTO PER BOOTH</div><h2>Booth Frames</h2><p>Atur slot per frame dan gunakan satu foto sumber di beberapa slot jika perlu.</p></div>
         <div className="camera-preset-actions">
           <button className="soft-button" type="button" onClick={() => presetInputRef.current?.click()}><Upload size={15} /> Impor preset</button>
           <button className="soft-button" type="button" onClick={exportFrame} disabled={!activeFrame}><Download size={15} /> Ekspor frame</button>
@@ -120,7 +120,7 @@ export function BoothFramesPanel({ settings, onChange, onSave }: BoothFramesPane
           {settings.frames.map((frame) => (
             <button key={frame.id} className={`booth-frame-choice ${settings.activeFrameId === frame.id ? 'active' : ''}`} type="button" onClick={() => onChange({ ...settings, activeFrameId: frame.id })}>
               <img src={frame.dataUrl} alt="" />
-              <span><b>{frame.name}</b><small>{frame.slots.length} foto · {frame.width} × {frame.height} px</small></span>
+              <span><b>{frame.name}</b><small>{frame.slots.length} slot · {getFramePhotoIndexes(frame).length} foto · {frame.width} × {frame.height} px</small></span>
               <span className="booth-frame-active-dot" />
             </button>
           ))}
@@ -130,7 +130,7 @@ export function BoothFramesPanel({ settings, onChange, onSave }: BoothFramesPane
         <section className="booth-frame-editor-card admin-card">
           {activeFrame
             ? <FrameEditor key={activeFrame.id} frame={activeFrame} onChange={updateFrame} onRename={(name) => updateFrame({ ...activeFrame, name })} onRemove={(slotId) => updateFrame({ ...activeFrame, slots: activeFrame.slots.filter((slot) => slot.id !== slotId) })} onDeleteFrame={() => deleteFrame(activeFrame.id)} />
-            : <div className="frame-empty-state"><span className="frame-empty-icon"><ImagePlus size={22} /></span><b>Pilih atau tambahkan frame</b><small>PNG disimpan pada ukuran aslinya. Jumlah foto per frame mengikuti slot yang kamu tambahkan.</small><button className="soft-button" type="button" onClick={() => pngInputRef.current?.click()}><ImagePlus size={15} /> Tambah PNG frame</button></div>}
+            : <div className="frame-empty-state"><span className="frame-empty-icon"><ImagePlus size={22} /></span><b>Pilih atau tambahkan frame</b><small>PNG disimpan pada ukuran aslinya. Duplikat slot bisa memakai foto sumber yang sama tanpa menambah jepretan.</small><button className="soft-button" type="button" onClick={() => pngInputRef.current?.click()}><ImagePlus size={15} /> Tambah PNG frame</button></div>}
         </section>
       </div>
       {(message || error) && <div className={`camera-settings-message ${error ? 'error' : ''}`}>{error || message}</div>}

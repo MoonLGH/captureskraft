@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { ImagePlus, Move, RotateCw, Trash2 } from 'lucide-react'
-import type { BoothFrame, FrameSlot } from '../boothFrames'
+import { Copy, ImagePlus, Move, RotateCw, Trash2 } from 'lucide-react'
+import { createId, getFramePhotoIndexes, type BoothFrame, type FrameSlot } from '../boothFrames'
 
 type FrameEditorProps = {
   frame: BoothFrame
@@ -48,6 +48,7 @@ export function FrameEditor({ frame, onChange, onRename, onRemove, onDeleteFrame
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null)
   const [dragPreview, setDragPreview] = useState<FrameSlot | null>(null)
   const selectedSlot = frame.slots.find((slot) => slot.id === selectedSlotId) ?? null
+  const photoIndexes = getFramePhotoIndexes(frame)
 
   const updateSlot = (slotId: string, changes: Partial<FrameSlot>) => {
     const slots = frame.slots.map((slot) => slot.id === slotId ? { ...slot, ...changes } : slot)
@@ -76,9 +77,26 @@ export function FrameEditor({ frame, onChange, onRename, onRemove, onDeleteFrame
       y = (frame.height - height) / 2
     }
 
-    const slot: FrameSlot = { id: `slot-${Date.now()}-${index}`, x, y, width, height, rotation: 0 }
+    const photoIndex = Math.max(-1, ...photoIndexes) + 1
+    const slot: FrameSlot = { id: createId('slot'), x, y, width, height, rotation: 0, photoIndex, imageZoom: 1, imageOffsetX: 0, imageOffsetY: 0 }
     setSelectedSlotId(slot.id)
     onChange({ ...frame, slots: [...frame.slots, slot] })
+  }
+
+  const duplicateSelectedSlot = () => {
+    if (!selectedSlot) return
+    const centerX = selectedSlot.x + selectedSlot.width / 2
+    const centerY = selectedSlot.y + selectedSlot.height / 2
+    const offsetX = Math.max(8, frame.width * 0.02) * (centerX + selectedSlot.width / 2 < frame.width ? 1 : -1)
+    const offsetY = Math.max(8, frame.height * 0.02) * (centerY + selectedSlot.height / 2 < frame.height ? 1 : -1)
+    const copy = keepCenterInFrame(
+      { ...selectedSlot, id: createId('slot') },
+      frame,
+      centerX + offsetX,
+      centerY + offsetY,
+    )
+    setSelectedSlotId(copy.id)
+    onChange({ ...frame, slots: [...frame.slots, copy] })
   }
 
   const deleteSlot = (slotId: string) => {
@@ -172,11 +190,12 @@ export function FrameEditor({ frame, onChange, onRename, onRemove, onDeleteFrame
         <label className="frame-name-field">Nama frame<input value={frame.name} onChange={(event) => onRename(event.target.value)} /></label>
         <div className="frame-editor-actions">
           <span className="frame-native-size">{frame.width} Ã— {frame.height} px Â· ukuran asli</span>
-          <button className="soft-button" type="button" onClick={addSlot}><ImagePlus size={15} /> Tambah foto</button>
+          <button className="soft-button" type="button" onClick={addSlot}><ImagePlus size={15} /> Tambah foto baru</button>
+          <button className="soft-button" type="button" disabled={!selectedSlot} onClick={duplicateSelectedSlot}><Copy size={14} /> Duplikat foto</button>
           <button className="frame-remove-button" type="button" onClick={onDeleteFrame}><Trash2 size={15} /> Hapus frame</button>
         </div>
       </div>
-      <p className="frame-transform-help">Geser area foto untuk memindahkan. Handle sisi dan sudut mengubah ukuran; handle bulat memutar.</p>
+      <p className="frame-transform-help">Geser area untuk memindahkan; handle sisi/sudut mengubah ukuran; handle bulat memutar. Duplikat foto menyalin sumber, ukuran, dan sudut. Saat hasil disusun, semua foto berada di bawah template PNG.</p>
 
       <div className="frame-editor-workspace">
         <div
@@ -202,10 +221,11 @@ export function FrameEditor({ frame, onChange, onRename, onRemove, onDeleteFrame
                 width: `${(shown.width / frame.width) * 100}%`,
                 height: `${(shown.height / frame.height) * 100}%`,
                 transform: `rotate(${shown.rotation}deg)`,
+                zIndex: selected ? frame.slots.length + 10 : 1,
               }}
               onPointerDown={(event) => startTransform(event, shown, 'move')}
             >
-              <span className="frame-slot-label"><Move size={12} /> Foto {index + 1}</span>
+              <span className="frame-slot-label"><Move size={12} /> Slot {index + 1} Â· Foto {photoIndexes.indexOf(slot.photoIndex) + 1}</span>
               {selected && <>
                 {HANDLES.map((handle) => <button
                   key={handle}
@@ -228,11 +248,18 @@ export function FrameEditor({ frame, onChange, onRename, onRemove, onDeleteFrame
         </div>
 
         <aside className="frame-slot-list">
-          <div className="frame-slot-list-heading"><b>Posisi foto</b><small>{frame.slots.length} slot Â· urut sesuai nomor foto</small></div>
+          <div className="frame-slot-list-heading"><b>Posisi foto</b><small>{frame.slots.length} slot Â· {photoIndexes.length} foto sumber unik</small></div>
           {frame.slots.length === 0 && <p className="frame-no-slots">Tambahkan slot lalu geser dan atur handle seperti transform control.</p>}
           {frame.slots.map((slot, index) => (
             <div className={`frame-slot-item ${selectedSlotId === slot.id ? 'selected' : ''}`} key={slot.id}>
-              <button className="frame-slot-select" type="button" onClick={() => setSelectedSlotId(slot.id)}>Foto {index + 1}</button>
+              <button className="frame-slot-select" type="button" onClick={() => setSelectedSlotId(slot.id)}>Slot {index + 1}</button>
+              <select
+                className="frame-slot-source"
+                aria-label={`Pilih foto sumber untuk slot ${index + 1}`}
+                value={slot.photoIndex}
+                onFocus={() => setSelectedSlotId(slot.id)}
+                onChange={(event) => updateSlot(slot.id, { photoIndex: Number(event.target.value) })}
+              >{photoIndexes.map((photoIndex, sourceIndex) => <option key={photoIndex} value={photoIndex}>Foto {sourceIndex + 1}</option>)}</select>
               <button className="frame-slot-delete" type="button" aria-label={`Hapus slot foto ${index + 1}`} onClick={() => deleteSlot(slot.id)}><Trash2 size={14} /></button>
             </div>
           ))}

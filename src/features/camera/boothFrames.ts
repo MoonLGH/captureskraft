@@ -5,6 +5,10 @@ export type FrameSlot = {
   width: number
   height: number
   rotation: number
+  photoIndex: number
+  imageZoom: number
+  imageOffsetX: number
+  imageOffsetY: number
 }
 
 export type BoothFrame = {
@@ -43,7 +47,7 @@ function parseFrame(value: unknown): BoothFrame | null {
   if (typeof frame.width !== 'number' || typeof frame.height !== 'number'
     || !Number.isFinite(frame.width) || !Number.isFinite(frame.height) || frame.width <= 0 || frame.height <= 0) return null
 
-  const slots = Array.isArray(frame.slots) ? frame.slots.flatMap((slotValue) => {
+  const slots = Array.isArray(frame.slots) ? frame.slots.flatMap((slotValue, index) => {
     if (!slotValue || typeof slotValue !== 'object') return []
     const slot = slotValue as Partial<FrameSlot>
     if (typeof slot.id !== 'string' || ![slot.x, slot.y, slot.width, slot.height].every((number) => typeof number === 'number' && Number.isFinite(number))) return []
@@ -56,9 +60,14 @@ function parseFrame(value: unknown): BoothFrame | null {
       width,
       height,
       rotation: typeof slot.rotation === 'number' && Number.isFinite(slot.rotation) ? slot.rotation : 0,
+      photoIndex: typeof slot.photoIndex === 'number' && Number.isFinite(slot.photoIndex) && slot.photoIndex >= 0
+        ? Math.floor(slot.photoIndex)
+        : index,
+      imageZoom: typeof slot.imageZoom === 'number' && Number.isFinite(slot.imageZoom) ? Math.max(1, slot.imageZoom) : 1,
+      imageOffsetX: typeof slot.imageOffsetX === 'number' && Number.isFinite(slot.imageOffsetX) ? Math.max(-1, Math.min(1, slot.imageOffsetX)) : 0,
+      imageOffsetY: typeof slot.imageOffsetY === 'number' && Number.isFinite(slot.imageOffsetY) ? Math.max(-1, Math.min(1, slot.imageOffsetY)) : 0,
     }]
   }) : []
-
   return {
     id: typeof frame.id === 'string' ? frame.id : createId(),
     name: typeof frame.name === 'string' && frame.name ? frame.name : 'Custom frame',
@@ -67,6 +76,10 @@ function parseFrame(value: unknown): BoothFrame | null {
     height: frame.height,
     slots,
   }
+}
+
+export function getFramePhotoIndexes(frame: BoothFrame) {
+  return [...new Set(frame.slots.map((slot) => slot.photoIndex))].sort((a, b) => a - b)
 }
 
 export function parseBoothFrames(value: string | undefined): BoothFramesSettings {

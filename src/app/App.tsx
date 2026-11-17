@@ -11,7 +11,8 @@ import { HomeScreen } from '../features/session/screens/HomeScreen'
 import { ResultScreen } from '../features/session/screens/ResultScreen'
 import { SavedScreen } from '../features/session/screens/SavedScreen'
 import { cameraTrackConstraints, parseCameraSettings, parseLegacyBoothFrame, serializeCameraSettings } from '../features/camera/cameraSettings'
-import { parseBoothFrames, serializeBoothFrames } from '../features/camera/boothFrames'
+import { getFramePhotoIndexes, parseBoothFrames, serializeBoothFrames } from '../features/camera/boothFrames'
+import type { BoothFrame } from '../features/camera/boothFrames'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('home')
@@ -33,7 +34,7 @@ function App() {
   const cameraSettings = useMemo(() => parseCameraSettings(config.cameraSettings), [config.cameraSettings])
   const boothFrames = useMemo(() => parseBoothFrames(config.boothFrames), [config.boothFrames])
   const activeFrame = boothFrames.frames.find((frame) => frame.id === boothFrames.activeFrameId) ?? null
-  const photoCount = activeFrame?.slots.length || 3
+  const photoCount = activeFrame ? getFramePhotoIndexes(activeFrame).length || 3 : 3
   const shotLimit = experience === 'strip' ? photoCount : 1
 
   useEffect(() => {
@@ -189,6 +190,23 @@ function App() {
     }
   }
 
+  const saveFrameCropPreset = async (updatedFrame: BoothFrame) => {
+    const nextBoothFrames = {
+      ...boothFrames,
+      frames: boothFrames.frames.map((frame) => frame.id === updatedFrame.id ? updatedFrame : frame),
+    }
+    const nextConfig = { ...config, boothFrames: serializeBoothFrames(nextBoothFrames) }
+    setConfig(nextConfig)
+    try {
+      if (window.boothConfig) await window.boothConfig.save(nextConfig)
+      setToast(window.boothConfig ? 'Default crop disimpan ke preset frame di perangkat.' : 'Default crop diperbarui untuk preview ini.')
+      return true
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'Preset frame gagal disimpan.')
+      return false
+    }
+  }
+
   const finishSession = () => {
     setSessionCount((count) => count + 1)
     setScreen('saved')
@@ -208,7 +226,7 @@ function App() {
         {screen === 'home' && <HomeScreen price={config.price} onBeginSession={beginSession} />}
         {screen === 'experience' && <ExperienceScreen experience={experience} price={config.price} shotCount={photoCount} onSelectExperience={setExperience} onBack={() => setScreen('home')} onContinue={() => setScreen('camera')} />}
         {screen === 'camera' && <CameraScreen experience={experience} shots={shots} shotLimit={shotLimit} cameraStream={cameraStream} cameraError={cameraError} countdown={countdown} capturing={capturing} videoRef={videoRef} onCapture={addShot} onRetake={() => setShots([])} onContinue={() => setScreen('result')} />}
-        {screen === 'result' && <ResultScreen experience={experience} shots={shots} frame={activeFrame} onRetake={retryResult} onFinish={finishSession} />}
+        {screen === 'result' && <ResultScreen experience={experience} shots={shots} frame={activeFrame} onRetake={retryResult} onFinish={finishSession} onSaveFramePreset={saveFrameCropPreset} />}
         {screen === 'saved' && <SavedScreen sessionCount={sessionCount} onHome={() => setScreen('home')} />}
         {screen === 'admin' && <AdminPanel activeTab={adminTab} setActiveTab={setAdminTab} config={config} setConfig={setConfig} onSave={saveSettings} sessionCount={sessionCount} onExit={() => setScreen('home')} />}
       </main>
