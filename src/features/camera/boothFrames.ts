@@ -17,8 +17,11 @@ export type BoothFrame = {
   dataUrl: string
   width: number
   height: number
+  appliesTo: FrameApplicability
   slots: FrameSlot[]
 }
+
+export type FrameApplicability = 'strip' | 'single' | 'both'
 
 export type BoothFramesSettings = {
   frames: BoothFrame[]
@@ -74,8 +77,19 @@ function parseFrame(value: unknown): BoothFrame | null {
     dataUrl: frame.dataUrl,
     width: frame.width,
     height: frame.height,
+    appliesTo: slotFrameApplicability(frame.appliesTo),
     slots,
   }
+}
+
+function slotFrameApplicability(value: unknown): FrameApplicability {
+  return value === 'strip' || value === 'single' || value === 'both' ? value : 'both'
+}
+
+export function frameApplicabilityLabel(value: FrameApplicability) {
+  if (value === 'strip') return 'Photo Strip saja'
+  if (value === 'single') return 'Foto tunggal saja'
+  return 'Photo Strip & foto tunggal'
 }
 
 export function getFramePhotoIndexes(frame: BoothFrame) {

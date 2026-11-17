@@ -121,6 +121,7 @@ export function parseLegacyBoothFrame(value: string | undefined): BoothFrame | n
       dataUrl: frame.dataUrl,
       width,
       height,
+      appliesTo: 'both',
       slots,
     }
   } catch {

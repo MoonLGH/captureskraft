@@ -23,5 +23,5 @@ dengan sistem all in one membolehkan app ini di pakai sama user (sebagai sistem 
 
 user berarti ini akan di taruh sebagai ui yang tampil di layar sentuh di booth yang terhubung dengan camera dll, yang interaktif dengan user dan mudah di mengerti, (dalam kondisi ini keyboard sudah di cabut, dan akan full touch screen)
 
-dan admin adalah ketika user berada di main menu dan menggunakan keyboard lalu mengklik ctrl+z maka akan terbuka admin menu yang harus memasukan password, untuk saat ini buat saja passwordnya "admin", admin menu ini membolehkan admin untuk mengatur mongodb database, ftp database dll
+dan admin adalah ketika user berada di main menu dan menggunakan keyboard lalu mengklik ctrl+z maka akan terbuka admin menu yang harus memasukan password, untuk saat ini buat saja passwordnya "admin", admin menu ini membolehkan admin untuk mengatur MongoDB, identitas booth, harga, kamera, dan frame
 dengan in mind adalah kemungkinan nanti kita akan membuat website hosted by vercel dimana kita akan masukin config yang sama dengan admin toko x dan dapat melihat penghasilan dll

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Download, ImagePlus, Trash2, Upload } from 'lucide-react'
 import { FrameEditor } from './components/FrameEditor'
-import { createFramePreset, createId, getFramePhotoIndexes, parseFramePreset, type BoothFrame, type BoothFramesSettings } from './boothFrames'
+import { createFramePreset, createId, frameApplicabilityLabel, getFramePhotoIndexes, parseFramePreset, type BoothFrame, type BoothFramesSettings } from './boothFrames'
 
 type BoothFramesPanelProps = {
   settings: BoothFramesSettings
@@ -49,6 +49,7 @@ export function BoothFramesPanel({ settings, onChange, onSave }: BoothFramesPane
           dataUrl,
           width: image.naturalWidth,
           height: image.naturalHeight,
+          appliesTo: 'both',
           slots: [],
         }
         onChange({ frames: [...settings.frames, frame], activeFrameId: frame.id })
@@ -120,7 +121,7 @@ export function BoothFramesPanel({ settings, onChange, onSave }: BoothFramesPane
           {settings.frames.map((frame) => (
             <button key={frame.id} className={`booth-frame-choice ${settings.activeFrameId === frame.id ? 'active' : ''}`} type="button" onClick={() => onChange({ ...settings, activeFrameId: frame.id })}>
               <img src={frame.dataUrl} alt="" />
-              <span><b>{frame.name}</b><small>{frame.slots.length} slot · {getFramePhotoIndexes(frame).length} foto · {frame.width} × {frame.height} px</small></span>
+              <span><b>{frame.name}</b><small>{frameApplicabilityLabel(frame.appliesTo)} · {frame.slots.length} slot · {frame.width} × {frame.height} px</small></span>
               <span className="booth-frame-active-dot" />
             </button>
           ))}

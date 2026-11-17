@@ -152,6 +152,7 @@ export function CameraSettingsPanel({ settings, onChange, onSave }: CameraSettin
         return
       }
       setPreviewStream(openedStream)
+      void enumerateCameras()
     }).catch(() => {
       if (active) setPreviewError(settings.cameraDeviceId
         ? 'Kamera terpilih tidak dapat dibuka. Periksa koneksi atau izin kamera.'
@@ -226,8 +227,8 @@ export function CameraSettingsPanel({ settings, onChange, onSave }: CameraSettin
       <div className="camera-settings-grid">
         <section className="admin-card camera-preview-card">
           <div className="camera-preview-heading">
-            <div className="camera-settings-card-title"><span className="config-icon ftp-icon"><Camera size={19} /></span><div><b>Live camera preview</b><small>Perubahan kontrol kamera akan terlihat di sini jika didukung perangkat.</small></div></div>
-            <span className={`camera-preview-status ${previewStream ? 'active' : ''}`}><i />{applyingPreviewControls ? 'Menerapkan setting' : previewStream ? 'Preview aktif' : 'Menyiapkan preview'}</span>
+            <div className="camera-settings-card-title"><span className="config-icon blue-config-icon"><Camera size={19} /></span><div><b>Live camera preview</b><small>Perubahan kontrol kamera akan terlihat di sini jika didukung perangkat.</small></div></div>
+            <span className={`camera-preview-status ${previewStream ? 'active' : previewError ? 'error' : ''}`}><i />{previewError ? 'Kamera tidak terhubung' : applyingPreviewControls ? 'Menerapkan setting' : previewStream ? 'Preview aktif' : 'Menyiapkan preview'}</span>
           </div>
           <div className="camera-preview-screen">
             <video ref={previewVideoRef} autoPlay muted playsInline aria-label="Preview kamera langsung" />
@@ -237,7 +238,7 @@ export function CameraSettingsPanel({ settings, onChange, onSave }: CameraSettin
         </section>
 
         <section className="admin-card camera-device-card">
-          <div className="camera-settings-card-title"><span className="config-icon ftp-icon"><Camera size={19} /></span><div><b>Perangkat kamera</b><span>Pilihan kamera hanya berlaku pada booth ini.</span></div></div>
+          <div className="camera-settings-card-title"><span className="config-icon blue-config-icon"><Camera size={19} /></span><div><b>Perangkat kamera</b><span>Pilihan kamera hanya berlaku pada booth ini.</span></div></div>
           <label className="input-label" htmlFor="camera-device">Kamera yang digunakan</label>
           <select className="admin-input" id="camera-device" value={settings.cameraDeviceId} onChange={(event) => changeDevice(event.target.value)}>
             <option value="">Kamera bawaan / default</option>

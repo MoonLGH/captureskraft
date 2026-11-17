@@ -1,17 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowRight, Move, Printer, RefreshCw, Save, Sparkles, ZoomIn } from 'lucide-react'
 import { InteractiveFramePreview } from '../../camera/components/InteractiveFramePreview'
 import { getFramePhotoIndexes } from '../../camera/boothFrames'
 import type { BoothFrame, FrameSlot } from '../../camera/boothFrames'
 import type { PhotoAdjustment, PhotoAdjustmentMap } from '../../camera/composeFrame'
 import type { Experience } from '../../../types/app'
+import { createSessionExportFiles, type SessionExportFile } from '../sessionExport'
 
 type ResultScreenProps = {
   experience: Experience
   shots: string[]
   frame: BoothFrame | null
   onRetake: () => void
-  onFinish: () => void
+  onFinish: (files: SessionExportFile[]) => Promise<void>
   onSaveFramePreset: (frame: BoothFrame) => Promise<boolean>
 }
 
@@ -25,10 +26,15 @@ export function ResultScreen({ experience, shots, frame, onRetake, onFinish, onS
   const [previewReady, setPreviewReady] = useState(false)
   const [presetMessage, setPresetMessage] = useState('')
   const [savingPreset, setSavingPreset] = useState(false)
+  const [savingSession, setSavingSession] = useState(false)
+  const [sessionSaveError, setSessionSaveError] = useState('')
   const photoIndexes = frame ? getFramePhotoIndexes(frame) : []
+  const frameShots = useMemo(() => frame && experience === 'single' && shots.length > 0
+    ? Array.from({ length: photoIndexes.length }, () => shots[0])
+    : shots, [experience, frame, photoIndexes.length, shots])
   const selectedSlot = frame?.slots.find((slot) => slot.id === selectedSlotId) ?? null
   const selectedPhotoIndex = selectedSlot ? photoIndexes.indexOf(selectedSlot.photoIndex) : -1
-  const selectedPhotoAvailable = selectedPhotoIndex >= 0 && Boolean(shots[selectedPhotoIndex])
+  const selectedPhotoAvailable = selectedPhotoIndex >= 0 && Boolean(frameShots[selectedPhotoIndex])
   const selectedAdjustment = selectedSlot
     ? adjustments[selectedSlot.id] ?? defaultAdjustment(selectedSlot)
     : { imageZoom: 1, imageOffsetX: 0, imageOffsetY: 0 }
@@ -73,19 +79,33 @@ export function ResultScreen({ experience, shots, frame, onRetake, onFinish, onS
     }
   }
 
+  const saveSession = async () => {
+    setSavingSession(true)
+    setSessionSaveError('')
+    try {
+      if (!window.boothConfig?.saveSession) throw new Error('Penyimpanan sesi hanya tersedia di aplikasi desktop.')
+      const files = await createSessionExportFiles({ shots, frame, frameShots, adjustments })
+      await onFinish(files)
+    } catch (error) {
+      setSessionSaveError(error instanceof Error ? error.message : 'Sesi gagal disimpan.')
+    } finally {
+      setSavingSession(false)
+    }
+  }
+
   const hasFrame = Boolean(frame?.slots.length)
   const previewIsLoading = hasFrame && !previewReady
 
   return (
     <section className="flow-page result-page">
-      <div className="result-heading"><span className="success-badge"><Sparkles size={17} /> HASIL FOTO SIAP</span><h2>Lucu banget! Ã¢Å“Â¨</h2><p>Geser foto di dalam slot atau gunakan kontrol zoom untuk mengatur area yang terlihat.</p></div>
+      <div className="result-heading"><span className="success-badge"><Sparkles size={17} /> HASIL FOTO SIAP</span><h2>Lucu banget! ✨</h2><p>Geser foto di dalam slot atau gunakan kontrol zoom untuk mengatur area yang terlihat.</p></div>
 
       {frame && frame.slots.length > 0
         ? <div className="frame-adjust-layout">
           <div className="framed-result-preview">
             <InteractiveFramePreview
               frame={frame}
-              shots={shots}
+              shots={frameShots}
               adjustments={adjustments}
               selectedSlotId={selectedSlotId}
               onSelectSlot={setSelectedSlotId}
@@ -120,11 +140,12 @@ export function ResultScreen({ experience, shots, frame, onRetake, onFinish, onS
           </aside>
         </div>
         : <div className={`result-strip ${experience === 'single' ? 'single-result' : ''}`}>
-          {shots.map((shot, index) => <div className="result-photo" key={`${index}-${shot.slice(-10)}`}><img src={shot} alt={`Hasil foto ${index + 1}`} /><span>CAPTURS Ã‚Â· {String(index + 1).padStart(2, '0')}</span></div>)}
-          <span className="result-brand">CAPTURS PHOTOBOOTH Ã‚Â· JAKARTA</span>
+          {shots.map((shot, index) => <div className="result-photo" key={`${index}-${shot.slice(-10)}`}><img src={shot} alt={`Hasil foto ${index + 1}`} /><span>CAPTURS · {String(index + 1).padStart(2, '0')}</span></div>)}
+          <span className="result-brand">CAPTURS PHOTOBOOTH · JAKARTA</span>
         </div>}
 
-      <div className="result-actions"><button className="soft-button" onClick={onRetake}><RefreshCw size={17} /> Foto ulang</button><button className="primary-cta compact" onClick={onFinish} disabled={previewIsLoading}><span>{previewIsLoading ? 'Menyiapkan hasil…' : 'Simpan & cetak foto'}</span><span className="cta-icon"><ArrowRight size={20} /></span></button></div>
+      {sessionSaveError && <p className="session-save-error" role="alert">{sessionSaveError}</p>}
+      <div className="result-actions"><button className="soft-button" onClick={onRetake} disabled={savingSession}><RefreshCw size={17} /> Foto ulang</button><button className="primary-cta compact" onClick={() => { void saveSession() }} disabled={previewIsLoading || savingSession}><span>{savingSession ? 'Menyimpan sesi…' : previewIsLoading ? 'Menyiapkan hasil…' : 'Simpan & cetak foto'}</span><span className="cta-icon"><ArrowRight size={20} /></span></button></div>
       <div className="print-note"><Printer size={15} /> Printer akan mulai setelah sesi tersimpan.</div>
     </section>
   )

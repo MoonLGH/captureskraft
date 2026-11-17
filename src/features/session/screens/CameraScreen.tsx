@@ -1,43 +1,80 @@
-import type { RefObject } from 'react'
-import { ArrowRight, Camera, Check, RefreshCw, Sparkles } from 'lucide-react'
+import { useState, type RefObject } from 'react'
+import { ArrowRight, Camera, Check, RefreshCw } from 'lucide-react'
 import type { Experience } from '../../../types/app'
 import { PhotoIllustration } from '../../../components/shared/PhotoIllustration'
+import type { BoothFrame } from '../../camera/boothFrames'
+import { LiveFrameCompositionPreview } from '../components/LiveFrameCompositionPreview'
 
 type CameraScreenProps = {
   experience: Experience
+  frame: BoothFrame | null
   shots: string[]
   shotLimit: number
   cameraStream: MediaStream | null
   cameraError: string
   countdown: number | null
+  advanceCountdown: number | null
+  retakeIndex: number | null
+  reviewIndex: number | null
   capturing: boolean
   videoRef: RefObject<HTMLVideoElement | null>
   onCapture: () => void
+  onRetakeShot: (index: number) => void
   onRetake: () => void
   onContinue: () => void
 }
 
-export function CameraScreen({ experience, shots, shotLimit, cameraStream, cameraError, countdown, capturing, videoRef, onCapture, onRetake, onContinue }: CameraScreenProps) {
+export function CameraScreen({ experience, frame, shots, shotLimit, cameraStream, cameraError, countdown, advanceCountdown, retakeIndex, reviewIndex, capturing, videoRef, onCapture, onRetakeShot, onRetake, onContinue }: CameraScreenProps) {
+  const [framePreviewWidth, setFramePreviewWidth] = useState(0)
+  const isReviewingShot = advanceCountdown !== null && reviewIndex !== null
+  const nextShotLabel = `Ambil foto ${shots.length + 1}`
+  const sessionComplete = shots.length >= shotLimit && !isReviewingShot
+  const shutterLabel = capturing
+    ? retakeIndex !== null ? `Mengulang foto ${retakeIndex + 1}…` : `Mengambil foto ${shots.length + 1}…`
+    : isReviewingShot ? `Ambil ulang foto ${reviewIndex + 1}` : nextShotLabel
+  const statusTitle = capturing
+    ? shutterLabel
+    : isReviewingShot ? `Ambil ulang foto ${reviewIndex + 1}?` : null
+  const statusCountdown = countdown ?? (isReviewingShot ? advanceCountdown : null)
+
   return (
-    <section className="flow-page camera-page">
-      <div className="camera-heading"><div><div className="eyebrow">LANGKAH 02 â€” SAATNYA BERPOSE</div><h2>Siapkan senyum terbaikmu!</h2><p>{experience === 'strip' ? `Kita ambil ${shotLimit} pose yang berbeda, ya.` : 'Satu pose terbaikmu akan jadi kenangan.'}</p></div><div className="shot-progress">{Array.from({ length: shotLimit }).map((_, index) => <span key={index} className={index < shots.length ? 'done' : ''}>{index < shots.length ? <Check size={14} /> : `0${index + 1}`}</span>)}</div></div>
+    <section className="camera-page">
       <div className="camera-layout">
         <div className="camera-view">
-          {cameraStream ? <video ref={videoRef} autoPlay playsInline muted className="camera-video" /> : <div className="camera-placeholder"><PhotoIllustration /><div className="placeholder-label"><Camera size={16} /> {cameraError || 'Menyiapkan kameraâ€¦'}</div></div>}
-          <div className="camera-live-pill"><span className={cameraStream ? 'status-dot' : 'status-dot muted'} />{cameraStream ? 'KAMERA SIAP' : 'MODE DEMO'}</div>
-          {countdown !== null && <div className="countdown-overlay"><span>{countdown}</span></div>}
-          {!cameraStream && <div className="camera-tip"><Sparkles size={16} /> Posisikan dirimu di dalam frame</div>}
+          {cameraStream
+            ? <video ref={videoRef} autoPlay playsInline muted className="camera-video" />
+            : <div className="camera-placeholder"><PhotoIllustration /><div className="placeholder-label"><Camera size={16} /> {cameraError || 'Menyiapkan kamera…'}</div></div>}
+          {statusTitle && <div className="countdown-overlay" aria-live="polite" aria-atomic="true">
+            <div className="camera-status-title">{statusTitle}</div>
+            {statusCountdown !== null && <strong className="camera-countdown-number">{statusCountdown}</strong>}
+            {isReviewingShot && <div className="camera-status-hint">tekan shutter button untuk retake</div>}
+          </div>}
         </div>
+
+        <header className="camera-heading camera-floating-heading">
+          <div className="shot-progress" style={framePreviewWidth > 0 && frame?.slots.length ? { width: `${framePreviewWidth}px` } : undefined} aria-label={`${shots.length} dari ${shotLimit} foto diambil`}>
+            {Array.from({ length: shotLimit }).map((_, index) => <span key={index} className={index < shots.length ? 'done' : ''}>{index < shots.length ? <Check size={14} /> : `0${index + 1}`}</span>)}
+          </div>
+        </header>
+
         {cameraStream && cameraError && <div className="camera-settings-warning">{cameraError}</div>}
-        <aside className="capture-panel">
-          <div className="capture-panel-head"><span>SESI FOTO</span><span>{shots.length} / {shotLimit}</span></div>
-          <div className="capture-thumbnails">{Array.from({ length: shotLimit }).map((_, index) => <div className={`capture-thumb ${shots[index] ? 'has-shot' : ''}`} key={index}>{shots[index] ? <img src={shots[index]} alt={`Foto ${index + 1}`} /> : <span>{String(index + 1).padStart(2, '0')}</span>}</div>)}</div>
-          <p>{shots.length >= shotLimit ? 'Semua pose sudah siap. Lihat hasilmu!' : 'Tekan tombol saat kamu siap untuk berpose.'}</p>
-          {shots.length < shotLimit ? <button className="shutter-button" onClick={onCapture} disabled={capturing}><span className="shutter-core" /><span>{capturing ? 'Bersiapâ€¦' : 'Ambil foto'}</span></button> : <button className="primary-cta compact result-cta" onClick={onContinue}><span>Lihat hasil foto</span><span className="cta-icon"><ArrowRight size={20} /></span></button>}
-          <button className="retake-link" onClick={onRetake} disabled={shots.length === 0}><RefreshCw size={14} /> Ulangi semua foto</button>
-        </aside>
+
+        <div className="camera-control-stack">
+          {frame && frame.slots.length > 0 && <aside className="camera-frame-composition" style={framePreviewWidth > 0 ? { width: `${framePreviewWidth}px` } : undefined}>
+            <LiveFrameCompositionPreview frame={frame} shots={shots} experience={experience} videoRef={videoRef} retakePhotoIndex={retakeIndex} onPreviewWidthChange={setFramePreviewWidth} />
+          </aside>}
+
+          <aside className={`capture-panel ${sessionComplete ? 'capture-panel-complete' : ''}`}>
+            <div className="capture-panel-head"><span>SESI FOTO</span><span>{shots.length} / {shotLimit}</span></div>
+            {isReviewingShot || shots.length < shotLimit
+              ? <button className="shutter-button" aria-label={shutterLabel} title={shutterLabel} onClick={() => { if (isReviewingShot && reviewIndex !== null) onRetakeShot(reviewIndex); else onCapture() }} disabled={capturing || countdown !== null}><span className="shutter-core" /></button>
+              : <button className="primary-cta compact result-cta" onClick={onContinue}><span>Lihat hasil foto</span><span className="cta-icon"><ArrowRight size={20} /></span></button>}
+            <button className="retake-link" onClick={onRetake} disabled={shots.length === 0 || capturing || countdown !== null}><RefreshCw size={14} /> Ulangi semua foto</button>
+          </aside>
+        </div>
+
+        <div className="flow-progress camera-flow-progress"><span className="active" /><span className="active" /><span className="active" /><span className="active" /><span className="active" /></div>
       </div>
-      <div className="flow-progress"><span className="active" /><span className="active" /><span /></div>
     </section>
   )
 }

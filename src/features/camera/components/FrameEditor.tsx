@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Copy, ImagePlus, Move, RotateCw, Trash2 } from 'lucide-react'
-import { createId, getFramePhotoIndexes, type BoothFrame, type FrameSlot } from '../boothFrames'
+import { createId, getFramePhotoIndexes, type BoothFrame, type FrameApplicability, type FrameSlot } from '../boothFrames'
 
 type FrameEditorProps = {
   frame: BoothFrame
@@ -187,9 +187,16 @@ export function FrameEditor({ frame, onChange, onRename, onRemove, onDeleteFrame
   return (
     <div className="frame-editor">
       <div className="frame-editor-toolbar">
-        <label className="frame-name-field">Nama frame<input value={frame.name} onChange={(event) => onRename(event.target.value)} /></label>
+        <div className="frame-editor-frame-fields">
+          <label className="frame-name-field">Nama frame<input value={frame.name} onChange={(event) => onRename(event.target.value)} /></label>
+          <label className="frame-applicability-field">Tersedia untuk<select value={frame.appliesTo} onChange={(event) => onChange({ ...frame, appliesTo: event.target.value as FrameApplicability })}>
+            <option value="strip">Photo Strip saja</option>
+            <option value="single">Foto tunggal saja</option>
+            <option value="both">Photo Strip & foto tunggal</option>
+          </select></label>
+        </div>
         <div className="frame-editor-actions">
-          <span className="frame-native-size">{frame.width} Ã— {frame.height} px Â· ukuran asli</span>
+          <span className="frame-native-size">{frame.width} × {frame.height} px · ukuran asli</span>
           <button className="soft-button" type="button" onClick={addSlot}><ImagePlus size={15} /> Tambah foto baru</button>
           <button className="soft-button" type="button" disabled={!selectedSlot} onClick={duplicateSelectedSlot}><Copy size={14} /> Duplikat foto</button>
           <button className="frame-remove-button" type="button" onClick={onDeleteFrame}><Trash2 size={15} /> Hapus frame</button>
@@ -225,7 +232,7 @@ export function FrameEditor({ frame, onChange, onRename, onRemove, onDeleteFrame
               }}
               onPointerDown={(event) => startTransform(event, shown, 'move')}
             >
-              <span className="frame-slot-label"><Move size={12} /> Slot {index + 1} Â· Foto {photoIndexes.indexOf(slot.photoIndex) + 1}</span>
+              <span className="frame-slot-label"><Move size={12} /> Slot {index + 1} · Foto {photoIndexes.indexOf(slot.photoIndex) + 1}</span>
               {selected && <>
                 {HANDLES.map((handle) => <button
                   key={handle}
@@ -248,7 +255,7 @@ export function FrameEditor({ frame, onChange, onRename, onRemove, onDeleteFrame
         </div>
 
         <aside className="frame-slot-list">
-          <div className="frame-slot-list-heading"><b>Posisi foto</b><small>{frame.slots.length} slot Â· {photoIndexes.length} foto sumber unik</small></div>
+          <div className="frame-slot-list-heading"><b>Posisi foto</b><small>{frame.slots.length} slot · {photoIndexes.length} foto sumber unik</small></div>
           {frame.slots.length === 0 && <p className="frame-no-slots">Tambahkan slot lalu geser dan atur handle seperti transform control.</p>}
           {frame.slots.map((slot, index) => (
             <div className={`frame-slot-item ${selectedSlotId === slot.id ? 'selected' : ''}`} key={slot.id}>
@@ -269,7 +276,7 @@ export function FrameEditor({ frame, onChange, onRename, onRemove, onDeleteFrame
             <label>Y<input type="number" min="0" max={frame.height - selectedSlot.height} step="any" value={Number(selectedSlot.y.toFixed(2))} onChange={(event) => updateSlot(selectedSlot.id, { y: clamp(Number(event.target.value), 0, frame.height - selectedSlot.height) })} /></label>
             <label>Lebar<input type="number" min="1" max={frame.width - selectedSlot.x} step="any" value={Number(selectedSlot.width.toFixed(2))} onChange={(event) => updateSlot(selectedSlot.id, { width: clamp(Number(event.target.value), 1, frame.width - selectedSlot.x) })} /></label>
             <label>Tinggi<input type="number" min="1" max={frame.height - selectedSlot.y} step="any" value={Number(selectedSlot.height.toFixed(2))} onChange={(event) => updateSlot(selectedSlot.id, { height: clamp(Number(event.target.value), 1, frame.height - selectedSlot.y) })} /></label>
-            <label>Rotasi (Â°)<input type="number" step="any" value={Number(selectedSlot.rotation.toFixed(2))} onChange={(event) => updateSlot(selectedSlot.id, { rotation: Number(event.target.value) || 0 })} /></label>
+            <label>Rotasi (°)<input type="number" step="any" value={Number(selectedSlot.rotation.toFixed(2))} onChange={(event) => updateSlot(selectedSlot.id, { rotation: Number(event.target.value) || 0 })} /></label>
           </div>}
         </aside>
       </div>
