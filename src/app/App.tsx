@@ -18,6 +18,19 @@ import { cameraTrackConstraints, parseCameraSettings, parseLegacyBoothFrame, ser
 import { getFramePhotoIndexes, parseBoothFrames, serializeBoothFrames } from '../features/camera/boothFrames'
 import type { BoothFrame } from '../features/camera/boothFrames'
 
+function normalizeStoredConfig(stored: Partial<Config>): Partial<Config> {
+  const parsedFrames = parseBoothFrames(stored.boothFrames)
+  const legacyFrame = parseLegacyBoothFrame(stored.cameraSettings)
+  const boothFrames = parsedFrames.frames.length || !legacyFrame
+    ? parsedFrames
+    : { frames: [legacyFrame], activeFrameId: legacyFrame.id }
+  return {
+    ...stored,
+    cameraSettings: serializeCameraSettings(parseCameraSettings(stored.cameraSettings)),
+    boothFrames: serializeBoothFrames(boothFrames),
+  }
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>('home')
   const [adminTab, setAdminTab] = useState<AdminTab>('overview')
@@ -26,11 +39,11 @@ function App() {
   const [passwordError, setPasswordError] = useState('')
   const [config, setConfig] = useState<Config>(initialConfig)
   const [experience, setExperience] = useState<Experience>('strip')
-  const [customerName, setCustomerName] = useState('')
   const [customerEmail, setCustomerEmail] = useState('')
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus | null>(null)
   const [paymentOrderId, setPaymentOrderId] = useState('')
   const [deliveryStatus, setDeliveryStatus] = useState('')
+  const [driveLink, setDriveLink] = useState('')
   const [selectedFrameId, setSelectedFrameId] = useState<string | null | undefined>(undefined)
   const [shots, setShots] = useState<string[]>([])
   const [sessionCount, setSessionCount] = useState(0)
@@ -43,6 +56,8 @@ function App() {
   const [reviewIndex, setReviewIndex] = useState<number | null>(null)
   const [capturing, setCapturing] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const configRevisionRef = useRef('')
+  const configLoadedRef = useRef(false)
   const captureTimer = useRef<number | undefined>(undefined)
   const advanceTimer = useRef<number | undefined>(undefined)
   const cameraSettings = useMemo(() => parseCameraSettings(config.cameraSettings), [config.cameraSettings])
@@ -56,21 +71,61 @@ function App() {
     : 1
 
   useEffect(() => {
-    void window.boothConfig?.load().then((stored) => {
-      const parsedFrames = parseBoothFrames(stored.boothFrames)
-      const legacyFrame = parseLegacyBoothFrame(stored.cameraSettings)
-      const boothFrames = parsedFrames.frames.length || !legacyFrame
-        ? parsedFrames
-        : { frames: [legacyFrame], activeFrameId: legacyFrame.id }
-      const camera = parseCameraSettings(stored.cameraSettings)
-      setConfig((current) => ({
-        ...current,
-        ...stored,
-        cameraSettings: serializeCameraSettings(camera),
-        boothFrames: serializeBoothFrames(boothFrames),
-      }))
-    })
+    let active = true
+    const loadStoredConfig = async () => {
+      const bridge = window.boothConfig
+      if (!bridge) return
+      try {
+        const before = await bridge.getRevision?.() ?? ''
+        let stored = await bridge.load()
+        let revision = await bridge.getRevision?.() ?? ''
+        if (before && revision && before !== revision) {
+          stored = await bridge.load()
+          revision = await bridge.getRevision?.() ?? ''
+        }
+        if (!active) return
+        configRevisionRef.current = revision
+        configLoadedRef.current = true
+        setConfig((current) => ({ ...current, ...normalizeStoredConfig(stored) }))
+      } catch (error) {
+        if (active) setToast(error instanceof Error ? error.message : 'Konfigurasi gagal dimuat.')
+      }
+    }
+    void loadStoredConfig()
+    return () => { active = false }
   }, [])
+
+  useEffect(() => {
+    if ((screen !== 'home' && screen !== 'frameSelect') || !window.boothConfig?.getRevision) return
+    let active = true
+    let refreshing = false
+    const refreshExternalConfig = async () => {
+      const bridge = window.boothConfig
+      if (!bridge?.getRevision || !configLoadedRef.current || refreshing) return
+      refreshing = true
+      try {
+        const revision = await bridge.getRevision()
+        if (!active || !revision || revision === configRevisionRef.current) return
+        const stored = await bridge.load()
+        const latestRevision = await bridge.getRevision()
+        if (!active || latestRevision !== revision) return
+        configRevisionRef.current = latestRevision
+        setConfig((current) => ({ ...current, ...normalizeStoredConfig(stored) }))
+        setToast('Konfigurasi booth diperbarui.')
+      } catch (error) {
+        if (active) setToast(error instanceof Error ? error.message : 'Konfigurasi gagal dimuat.')
+      } finally {
+        refreshing = false
+      }
+    }
+    const interval = window.setInterval(() => { void refreshExternalConfig() }, 1500)
+    window.addEventListener('focus', refreshExternalConfig)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshExternalConfig)
+    }
+  }, [screen])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -254,11 +309,11 @@ function App() {
   const beginSession = () => {
     resetShots()
     setSelectedFrameId(undefined)
-    setCustomerName('')
     setCustomerEmail('')
     setPaymentStatus(null)
     setPaymentOrderId('')
     setDeliveryStatus('')
+    setDriveLink('')
     setScreen('experience')
   }
 
@@ -310,12 +365,15 @@ function App() {
 
   const saveSettings = async () => {
     try {
-      if (window.boothConfig) await window.boothConfig.save(config)
-      if (window.boothConfig && config.midtransServerKey.trim()) {
+      if (window.boothConfig) {
+        const result = await window.boothConfig.save(config)
+        if (result.revision) configRevisionRef.current = result.revision
+      }
+      if (window.boothConfig && (config.midtransServerKey.trim() || config.rcloneClientSecret.trim())) {
         setConfig((current) => ({
           ...current,
-          midtransServerKey: '',
-          midtransServerKeyConfigured: true,
+          ...(current.midtransServerKey.trim() ? { midtransServerKey: '', midtransServerKeyConfigured: true } : {}),
+          ...(current.rcloneClientSecret.trim() ? { rcloneClientSecret: '', rcloneClientSecretConfigured: true } : {}),
         }))
       }
       setToast(window.boothConfig
@@ -334,7 +392,10 @@ function App() {
     const nextConfig = { ...config, boothFrames: serializeBoothFrames(nextBoothFrames) }
     setConfig(nextConfig)
     try {
-      if (window.boothConfig) await window.boothConfig.save(nextConfig)
+      if (window.boothConfig) {
+        const result = await window.boothConfig.save(nextConfig)
+        if (result.revision) configRevisionRef.current = result.revision
+      }
       setToast(window.boothConfig ? 'Default crop disimpan ke preset frame di perangkat.' : 'Default crop diperbarui untuk preview ini.')
       return true
     } catch (error) {
@@ -347,41 +408,47 @@ function App() {
     if (!window.boothConfig?.saveSession) throw new Error('Penyimpanan sesi hanya tersedia di aplikasi desktop.')
     if (!paymentStatus) throw new Error('Status pembayaran sesi belum tersedia.')
     const receipt = await window.boothConfig.saveSession(files, {
-      customerName,
       customerEmail,
       operationMode: config.operationMode,
       paymentStatus,
       paymentOrderId,
       experience,
     })
-    const delivery = [
-      'Foto tersimpan lokal.',
-      config.rcloneEnabled === 'true' ? (receipt.backupSent ? 'Backup Google Drive berhasil.' : `Backup Google Drive gagal${receipt.backupError ? `: ${receipt.backupError}` : '.'}`) : '',
-    ].filter(Boolean).join(' ')
+    const delivery = receipt.driveLink
+      ? 'Foto berhasil diunggah. Pindai QR untuk membuka folder Google Drive.'
+      : config.rcloneEnabled !== 'true'
+        ? 'Foto tersimpan lokal. Upload Google Drive belum diaktifkan.'
+        : receipt.driveUploaded
+          ? `Foto sudah diunggah, tetapi link folder gagal dibuat${receipt.driveError ? `: ${receipt.driveError}` : '.'}`
+          : `Foto tersimpan lokal; upload Google Drive gagal${receipt.driveError ? `: ${receipt.driveError}` : '.'}`
     setDeliveryStatus(delivery)
+    setDriveLink(receipt.driveLink)
     setSessionCount((count) => count + 1)
     setScreen('saved')
   }
 
-  const handleBack = () => setScreen(screen === 'saved' ? 'home' : screen === 'result' ? 'camera' : screen === 'camera' ? 'frameSelect' : screen === 'frameSelect' ? 'customer' : screen === 'customer' ? config.operationMode === 'event' ? 'experience' : 'payment' : screen === 'payment' ? 'experience' : screen === 'experience' ? 'home' : 'home')
+  const handleBack = () => {
+    if (screen === 'customer') return
+    setScreen(screen === 'saved' ? 'home' : screen === 'result' ? 'camera' : screen === 'camera' ? 'frameSelect' : screen === 'frameSelect' ? 'customer' : screen === 'payment' ? 'experience' : screen === 'experience' ? 'home' : 'home')
+  }
   const retryResult = () => {
     resetShots()
     setScreen('camera')
   }
 
   return (
-    <div className={`app-shell ${screen === 'home' ? 'app-home' : ''} ${screen === 'camera' ? 'app-camera' : ''}`}>
+    <div className={`app-shell ${screen === 'admin' ? 'app-admin-side' : 'app-user-side'} ${screen === 'home' ? 'app-home' : ''} ${screen === 'camera' ? 'app-camera' : ''}`}>
       {screen !== 'admin' && <AppHeader screen={screen} boothName={config.storeName} onHome={() => setScreen('home')} onBack={handleBack} />}
 
       <main className={`main-content ${screen === 'camera' ? 'camera-main-content' : ''}`}>
         {screen === 'home' && <HomeScreen boothName={config.storeName} onBeginSession={beginSession} />}
         {screen === 'experience' && <ExperienceScreen experience={experience} price={config.price} paymentCoveredByEvent={config.operationMode === 'event'} onSelectExperience={selectExperience} onBack={() => setScreen('home')} onContinue={continueToPayment} />}
         {screen === 'payment' && <PaymentScreen experience={experience} price={config.price} mode={config.operationMode} environment={config.paymentEnvironment} clientKey={config.midtransClientKey} serverKeyConfigured={config.midtransServerKeyConfigured} onBack={() => setScreen('experience')} onPaymentComplete={paymentComplete} onSkipPayment={skipPayment} />}
-        {screen === 'customer' && <CustomerDetailsScreen name={customerName} email={customerEmail} onNameChange={setCustomerName} onEmailChange={setCustomerEmail} onBack={handleBack} onContinue={() => setScreen('frameSelect')} />}
+        {screen === 'customer' && <CustomerDetailsScreen email={customerEmail} onEmailChange={setCustomerEmail} onContinue={() => setScreen('frameSelect')} />}
         {screen === 'frameSelect' && <FrameSelectionScreen experience={experience} frames={compatibleFrames} selectedFrameId={selectedFrameId} onSelectFrame={selectSessionFrame} onBack={() => setScreen('customer')} onContinue={continueToCamera} />}
         {screen === 'camera' && <CameraScreen experience={experience} frame={sessionFrame} shots={shots} shotLimit={shotLimit} cameraStream={cameraStream} cameraError={cameraError} countdown={countdown} advanceCountdown={advanceCountdown} retakeIndex={retakeIndex} reviewIndex={reviewIndex} capturing={capturing} videoRef={videoRef} onCapture={addShot} onRetakeShot={(index) => addShot(index)} onRetake={resetShots} onContinue={() => setScreen('result')} />}
         {screen === 'result' && <ResultScreen experience={experience} shots={shots} frame={sessionFrame} onRetake={retryResult} onFinish={finishSession} onSaveFramePreset={saveFrameCropPreset} />}
-        {screen === 'saved' && <SavedScreen sessionCount={sessionCount} deliveryStatus={deliveryStatus} onHome={() => setScreen('home')} />}
+        {screen === 'saved' && <SavedScreen sessionCount={sessionCount} deliveryStatus={deliveryStatus} driveLink={driveLink} onHome={() => setScreen('home')} />}
         {screen === 'admin' && <AdminPanel activeTab={adminTab} setActiveTab={setAdminTab} config={config} setConfig={setConfig} onSave={saveSettings} sessionCount={sessionCount} onExit={() => setScreen('home')} />}
       </main>
 

@@ -44,7 +44,8 @@ export function InteractiveFramePreview({ frame, shots, adjustments, selectedSlo
   const [error, setError] = useState('')
   const photoIndexes = getFramePhotoIndexes(frame)
   const photoIndexesKey = photoIndexes.join(',')
-  const previewWidth = Math.min(520, Math.max(1, window.innerHeight * 0.62 * frame.width / frame.height))
+  const previewHeightRatio = window.innerWidth >= 1200 && window.innerHeight >= 650 ? 0.48 : 0.62
+  const previewWidth = Math.min(520, Math.max(1, window.innerHeight * previewHeightRatio * frame.width / frame.height))
 
   useEffect(() => {
     let active = true

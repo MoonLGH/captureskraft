@@ -17,6 +17,9 @@ type BoothConfig = {
   rcloneRemote: string
   rcloneFolder: string
   rcloneConfigPath: string
+  rcloneClientId: string
+  rcloneClientSecret: string
+  rcloneClientSecretConfigured: boolean
   cameraSettings: string
   boothFrames: string
 }
@@ -27,7 +30,6 @@ type SessionFilePayload = {
 }
 
 type SessionMetadata = {
-  customerName: string
   customerEmail: string
   operationMode: 'dev' | 'booth' | 'event'
   paymentStatus: 'paid' | 'skipped' | 'event'
@@ -50,12 +52,14 @@ type RcloneSettings = {
 interface Window {
   boothConfig?: {
     load: () => Promise<Partial<BoothConfig>>
-    save: (config: BoothConfig) => Promise<{ saved: boolean }>
-    saveSession: (files: SessionFilePayload[], metadata: SessionMetadata) => Promise<{ saved: boolean; directory: string; backupSent: boolean; backupError?: string }>
+    getRevision?: () => Promise<string>
+    save: (config: BoothConfig) => Promise<{ saved: boolean; revision?: string }>
+    saveSession: (files: SessionFilePayload[], metadata: SessionMetadata) => Promise<{ saved: boolean; directory: string; driveUploaded: boolean; driveLink: string; driveError?: string }>
     chooseStoragePath: () => Promise<{ canceled: boolean; path: string }>
     createMidtransPayment: (input: CreateMidtransPaymentInput) => Promise<{ token: string; orderId: string }>
     verifyMidtransPayment: (orderId: string) => Promise<{ paid: boolean; status: string; terminal: boolean }>
-    testRclone: (settings: RcloneSettings) => Promise<{ message: string }>
+    testRclone: (settings: RcloneSettings) => Promise<{ message: string; account: string }>
+    connectRclone: (settings: RcloneSettings) => Promise<{ message: string; account: string }>
   }
 }
 

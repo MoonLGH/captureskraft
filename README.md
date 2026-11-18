@@ -23,7 +23,7 @@ Di halaman utama, tekan **Ctrl+Z** lalu masukkan password awal `admin`. Password
 - Alur pelanggan: pilih format → pembayaran (langkah 2) → nama dan email (langkah 3) → pilih frame → ambil foto. **DEV mode** menyediakan Midtrans sandbox/production dan opsi skip; **Booth mode** mewajibkan pembayaran Midtrans; **Event mode** melewati pembayaran karena sesi sudah dibayar penyelenggara.
 - Pengaturan Midtrans ada di Admin → **Koneksi data**. Electron membuat Snap token dan memeriksa status transaksi otomatis ke API Midtrans, jadi pembayaran tidak memerlukan URL atau port backend lokal. Transaksi tetap memerlukan internet. Server Key disimpan terenkripsi di komputer booth; batasi akses fisik ke perangkat tersebut.
 - Nama dan email pelanggan disimpan di `info.json` bersama setiap sesi foto. Foto tersimpan lokal di booth; aplikasi tidak mengirim hasil foto lewat email.
-- Backup Google Drive opsional menggunakan rclone. Instal rclone, siapkan remote Google Drive dengan `rclone config`, lalu isi executable, nama remote, folder, dan bila perlu lokasi file config pada Admin → **Koneksi data**. Nyalakan backup otomatis dan gunakan **Tes koneksi rclone** sebelum sesi produksi.
+- Upload Google Drive opsional menggunakan rclone. Instal rclone, siapkan remote Google Drive dengan `rclone config`, lalu isi executable, nama remote, folder, dan bila perlu lokasi file config pada Admin → **Koneksi data**. Nyalakan upload otomatis dan gunakan **Tes koneksi rclone** sebelum sesi produksi. Setelah upload, aplikasi membuat QR publik untuk folder gambar sesi; `info.json` tidak ikut diupload.
 - Gunakan API/backend untuk menghubungkan booth ke website. Jangan menyimpan kredensial database di aplikasi web Vercel.
 
 ## Palet global

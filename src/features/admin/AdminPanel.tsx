@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ArrowRight, Camera, CheckCircle2, ChevronRight, Cloud, CloudUpload, CreditCard, Database, FolderOpen, Image, Images, LayoutDashboard, LogOut, Printer, RefreshCw, Save, Settings2, ShieldCheck, Store, Video, Wifi } from 'lucide-react'
+import { ArrowRight, Camera, CheckCircle2, ChevronRight, Cloud, CloudUpload, CreditCard, Database, FolderOpen, Image, Images, LayoutDashboard, LogOut, Printer, RefreshCw, Save, Settings2, ShieldCheck, Store, UserRound, Video, Wifi } from 'lucide-react'
 import { BrandMark } from '../../components/shared/BrandMark'
 import { ConnectionRow } from './components/ConnectionRow'
 import { MetricCard } from './components/MetricCard'
@@ -22,7 +22,9 @@ export function AdminPanel({ activeTab, setActiveTab, config, setConfig, onSave,
   const patch = <Key extends keyof Config,>(field: Key, value: Config[Key]) => setConfig({ ...config, [field]: value })
   const [storagePathError, setStoragePathError] = useState('')
   const [testingRclone, setTestingRclone] = useState(false)
+  const [connectingRclone, setConnectingRclone] = useState(false)
   const [rcloneStatus, setRcloneStatus] = useState('')
+  const [rcloneAccount, setRcloneAccount] = useState('')
   const chooseStoragePath = async () => {
     setStoragePathError('')
     try {
@@ -43,10 +45,31 @@ export function AdminPanel({ activeTab, setActiveTab, config, setConfig, onSave,
         configPath: config.rcloneConfigPath,
       })
       setRcloneStatus(result?.message ?? 'Pengujian rclone hanya tersedia di aplikasi desktop.')
+      setRcloneAccount(result?.account || 'Akun tidak tersedia')
     } catch (error) {
       setRcloneStatus(error instanceof Error ? error.message : 'Koneksi rclone gagal.')
+      setRcloneAccount('')
     } finally {
       setTestingRclone(false)
+    }
+  }
+  const connectRclone = async () => {
+    setConnectingRclone(true)
+    setRcloneStatus('Ikuti login Google yang terbuka untuk menghubungkan akun.')
+    setRcloneAccount('')
+    try {
+      const result = await window.boothConfig?.connectRclone({
+        executable: config.rcloneExecutable,
+        remote: config.rcloneRemote,
+        folder: config.rcloneFolder,
+        configPath: config.rcloneConfigPath,
+      })
+      setRcloneStatus(result?.message ?? 'Penghubungan akun hanya tersedia di aplikasi desktop.')
+      setRcloneAccount(result?.account || 'Akun tidak tersedia')
+    } catch (error) {
+      setRcloneStatus(error instanceof Error ? error.message : 'Akun Google Drive gagal dihubungkan.')
+    } finally {
+      setConnectingRclone(false)
     }
   }
   const cameraSettings = useMemo(() => parseCameraSettings(config.cameraSettings), [config.cameraSettings])
@@ -91,10 +114,13 @@ export function AdminPanel({ activeTab, setActiveTab, config, setConfig, onSave,
             <div className="connector-note"><span className="note-info">i</span><span>Server Key disimpan terenkripsi di perangkat dan dipakai oleh Electron untuk membuat token serta memverifikasi transaksi. Jaga akses fisik komputer booth; transaksi membutuhkan internet. Skip hanya tersedia di DEV mode, dan Event mode melewati gateway.</span></div>
           </section>
           <section className="admin-card integration-settings-card">
-            <div className="settings-section-title"><span className="config-icon blue-config-icon"><CloudUpload size={20} /></span><div><b>Backup Google Drive · rclone</b><span>Backup folder sesi sesudah foto tersimpan lokal.</span></div></div>
-            <label className="rclone-toggle"><input type="checkbox" checked={config.rcloneEnabled === 'true'} onChange={(event) => patch('rcloneEnabled', event.target.checked ? 'true' : 'false')} /><span><b>Aktifkan backup otomatis</b><small>Backup tetap berjalan setelah penyimpanan lokal berhasil.</small></span></label>
-            <div className="rclone-fields"><label><span>Executable rclone</span><input className="admin-input" value={config.rcloneExecutable} onChange={(event) => patch('rcloneExecutable', event.target.value)} placeholder="rclone" /></label><label><span>Nama remote</span><input className="admin-input" value={config.rcloneRemote} onChange={(event) => patch('rcloneRemote', event.target.value)} placeholder="gdrive" /></label><label><span>Folder Google Drive</span><input className="admin-input" value={config.rcloneFolder} onChange={(event) => patch('rcloneFolder', event.target.value)} placeholder="Capturs" /></label><label><span>File config rclone (opsional)</span><input className="admin-input" value={config.rcloneConfigPath} onChange={(event) => patch('rcloneConfigPath', event.target.value)} placeholder="Kosongkan untuk config default rclone" /></label></div>
-            <div className="rclone-actions"><button className="storage-choose-button" type="button" onClick={() => { void testRclone() }} disabled={testingRclone}><RefreshCw size={14} className={testingRclone ? 'spinning' : ''} /> {testingRclone ? 'Menguji…' : 'Tes koneksi rclone'}</button>{rcloneStatus && <small role="status">{rcloneStatus}</small>}</div>
+            <div className="settings-section-title"><span className="config-icon blue-config-icon"><CloudUpload size={20} /></span><div><b>Upload foto & QR Google Drive</b><span>Upload gambar sesi setelah foto tersimpan lokal.</span></div></div>
+            <label className="rclone-toggle"><input type="checkbox" checked={config.rcloneEnabled === 'true'} onChange={(event) => patch('rcloneEnabled', event.target.checked ? 'true' : 'false')} /><span><b>Aktifkan upload & QR otomatis</b><small>Foto diupload ke folder Drive dan dibagikan lewat QR.</small></span></label>
+            <div className="rclone-fields"><label><span>Executable rclone</span><input className="admin-input" value={config.rcloneExecutable} onChange={(event) => patch('rcloneExecutable', event.target.value)} placeholder="rclone" /></label><label><span>Nama remote</span><input className="admin-input" value={config.rcloneRemote} onChange={(event) => patch('rcloneRemote', event.target.value)} placeholder="gdrive" /></label><label><span>Folder Google Drive</span><input className="admin-input" value={config.rcloneFolder} onChange={(event) => patch('rcloneFolder', event.target.value)} placeholder="Capturs" /></label><label><span>File config rclone (opsional)</span><input className="admin-input" value={config.rcloneConfigPath} onChange={(event) => patch('rcloneConfigPath', event.target.value)} placeholder="Kosongkan untuk config default rclone" /></label><label><span>User Google Drive (email)</span><input className="admin-input readonly-input" value={rcloneAccount || 'Belum diperiksa'} readOnly /></label><label><span>Google OAuth Client ID (remote baru)</span><input className="admin-input" value={config.rcloneClientId} onChange={(event) => patch('rcloneClientId', event.target.value)} placeholder="...apps.googleusercontent.com" /></label><label><span>Google OAuth Client Secret (remote baru)</span><input className="admin-input" type="password" value={config.rcloneClientSecret} onChange={(event) => patch('rcloneClientSecret', event.target.value)} placeholder={config.rcloneClientSecretConfigured ? 'Tersimpan terenkripsi · isi untuk mengganti' : 'Client Secret dari Google Cloud'} autoComplete="new-password" /></label></div>
+            <small className="field-help">Email akun dibaca otomatis. Hubungkan akun akan menyiapkan remote baru atau membuka login ulang untuk remote yang sudah ada. Token tetap dikelola rclone. Simpan perubahan sebelum menghubungkan akun.</small>
+            <small className="field-help">Untuk remote baru, isi OAuth Client ID dan Secret dari Google Cloud (jenis Desktop app, dengan Google Drive API aktif); keduanya dipakai untuk login, dan Secret disimpan terenkripsi di perangkat. Remote yang sudah dikonfigurasi bisa memakai kredensialnya sendiri.</small>
+            <div className="rclone-actions"><button className="storage-choose-button" type="button" onClick={() => { void connectRclone() }} disabled={connectingRclone || testingRclone}><UserRound size={14} className={connectingRclone ? 'spinning' : ''} /> {connectingRclone ? 'Menghubungkan…' : 'Hubungkan akun Google'}</button><button className="storage-choose-button" type="button" onClick={() => { void testRclone() }} disabled={testingRclone || connectingRclone}><RefreshCw size={14} className={testingRclone ? 'spinning' : ''} /> {testingRclone ? 'Menguji…' : 'Tes koneksi rclone'}</button>{rcloneStatus && <small role="status">{rcloneStatus}</small>}</div>
+            <div className="connector-note"><span className="note-info">i</span><span>QR membuka folder publik. Siapa pun yang memiliki link dapat melihat gambar; link tidak kedaluwarsa otomatis dan bisa dicabut dari Google Drive. info.json tetap hanya di penyimpanan lokal.</span></div>
           </section>
         </>}
 

@@ -22,6 +22,9 @@ export type Config = {
   rcloneRemote: string
   rcloneFolder: string
   rcloneConfigPath: string
+  rcloneClientId: string
+  rcloneClientSecret: string
+  rcloneClientSecretConfigured: boolean
   cameraSettings: string
   boothFrames: string
 }

@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain, safeStorage, session } = require('electron')
-const { execFile } = require('node:child_process')
+const { execFile, spawn } = require('node:child_process')
 const fs = require('node:fs/promises')
 const path = require('node:path')
 const { randomUUID } = require('node:crypto')
@@ -8,12 +8,12 @@ const { promisify } = require('node:util')
 const execFileAsync = promisify(execFile)
 const verifiedPaymentOrders = new Map()
 
-const secretFields = ['mongoUri', 'midtransServerKey']
+const secretFields = ['mongoUri', 'midtransServerKey', 'rcloneClientSecret']
 const rendererSecretFields = ['mongoUri']
 const allowedFields = [
   'storeName', 'storeId', 'price', 'mongoUri', 'syncUrl', 'storagePath',
   'operationMode', 'paymentEnvironment', 'midtransClientKey', 'midtransServerKey',
-  'rcloneEnabled', 'rcloneExecutable', 'rcloneRemote', 'rcloneFolder', 'rcloneConfigPath',
+  'rcloneEnabled', 'rcloneExecutable', 'rcloneRemote', 'rcloneFolder', 'rcloneConfigPath', 'rcloneClientId', 'rcloneClientSecret',
   'cameraSettings',
   'boothFrames',
 ]
@@ -42,6 +42,24 @@ async function ensureCaptursDirectories() {
   ])
 }
 
+async function writeConfigFile(contents) {
+  const destination = configPath()
+  const destinationDirectory = path.dirname(destination)
+  await fs.mkdir(destinationDirectory, { recursive: true })
+  const systemTempDirectory = app.getPath('temp')
+  const temporaryDirectory = path.parse(systemTempDirectory).root.toLowerCase() === path.parse(destination).root.toLowerCase()
+    ? systemTempDirectory
+    : destinationDirectory
+  const temporaryPath = path.join(temporaryDirectory, `capturs-config-${process.pid}-${randomUUID()}.tmp`)
+  try {
+    await fs.writeFile(temporaryPath, contents, { flag: 'wx' })
+    await fs.rename(temporaryPath, destination)
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {})
+    throw error
+  }
+}
+
 function normalizeStoragePath(value) {
   return typeof value === 'string' && value.trim()
     ? path.resolve(value.trim())
@@ -58,8 +76,7 @@ async function readStoredConfig() {
   try {
     const legacyConfig = await fs.readFile(legacyConfigPath())
     const parsed = JSON.parse(legacyConfig.toString('utf8'))
-    await fs.mkdir(path.dirname(configPath()), { recursive: true })
-    await fs.writeFile(configPath(), legacyConfig)
+    await writeConfigFile(legacyConfig)
     return parsed
   } catch (error) {
     if (error.code === 'ENOENT') return null
@@ -135,36 +152,158 @@ async function requestMidtrans(saved, url, options = {}) {
 }
 
 function validateCustomer(customer) {
-  const name = typeof customer?.name === 'string' ? customer.name.trim() : ''
   const email = typeof customer?.email === 'string' ? customer.email.trim() : ''
-  if (!name || name.length > 100) throw new Error('Nama pelanggan tidak valid.')
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Email pelanggan tidak valid.')
-  return { name, email }
+  return { email }
 }
 
-function rcloneArguments(settings, command, sourcePath) {
+function rcloneArguments(settings, command, sourcePath, includeFiles = []) {
   const executable = typeof settings?.executable === 'string' && settings.executable.trim()
     ? settings.executable.trim()
     : 'rclone'
   const remote = typeof settings?.remote === 'string' ? settings.remote.trim() : ''
-  const folder = typeof settings?.folder === 'string' ? settings.folder.trim().replace(/^\/+|\/+$/g, '') : ''
+  const folder = typeof settings?.folder === 'string' ? settings.folder.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') : ''
   const configPathValue = typeof settings?.configPath === 'string' ? settings.configPath.trim() : ''
   if (!/^[a-zA-Z0-9_.-]+$/.test(remote)) throw new Error('Nama remote rclone harus diisi dan hanya boleh berisi huruf, angka, titik, garis bawah, atau tanda hubung.')
   if (folder.split(/[\\/]+/).some((part) => part === '..') || folder.includes(':')) throw new Error('Folder tujuan rclone tidak valid.')
   const args = configPathValue ? ['--config', path.resolve(configPathValue)] : []
-  if (command === 'copy') {
-    if (!sourcePath) throw new Error('Folder sesi lokal tidak tersedia untuk backup.')
+  if (command === 'copy' || command === 'copy-images') {
+    if (!sourcePath) throw new Error('Folder sesi lokal tidak tersedia untuk upload.')
     const remotePath = `${remote}:${folder ? `${folder}/` : ''}${path.basename(sourcePath)}`
     args.push('copy', sourcePath, remotePath)
+    if (command === 'copy-images') {
+      if (!Array.isArray(includeFiles) || includeFiles.length === 0) throw new Error('File foto untuk upload tidak tersedia.')
+      for (const fileName of includeFiles) {
+        if (!/^(Hasil\.png|Boomerang\.gif|Foto \d{2}\.png)$/.test(fileName)) throw new Error('Nama file foto untuk upload tidak valid.')
+        args.push('--include', `/${fileName}`)
+      }
+    }
+  } else if (command === 'link') {
+    const remoteRelativePath = typeof sourcePath === 'string' ? sourcePath.trim().replace(/^\/+|\/+$/g, '') : ''
+    if (!remoteRelativePath || /[:]/.test(remoteRelativePath) || remoteRelativePath.split(/[\\/]+/).some((part) => part === '..' || !part)) {
+      throw new Error('Folder foto untuk membuat link tidak valid.')
+    }
+    args.push('link', `${remote}:${folder ? `${folder}/` : ''}${remoteRelativePath}/`)
+  } else if (command === 'userinfo') {
+    args.push('config', 'userinfo', `${remote}:`, '--json')
+  } else if (command === 'listremotes') {
+    args.push('listremotes')
+  } else if (command === 'create-drive') {
+    args.push('config', 'create', remote, 'drive', 'scope', 'drive', 'config_is_local', 'true')
   } else {
     args.push('lsd', `${remote}:`)
   }
   return { executable, args }
 }
 
-async function runRclone(settings, command, sourcePath) {
-  const { executable, args } = rcloneArguments(settings, command, sourcePath)
-  return execFileAsync(executable, args, { timeout: 120000, maxBuffer: 1024 * 1024, windowsHide: true })
+async function runRclone(settings, command, sourcePath, includeFiles = []) {
+  const { executable, args } = rcloneArguments(settings, command, sourcePath, includeFiles)
+  const env = await rcloneEnvironment()
+  return execFileAsync(executable, args, { env, timeout: command === 'create-drive' ? 300000 : 120000, maxBuffer: 1024 * 1024, windowsHide: true })
+}
+
+async function rcloneEnvironment() {
+  const saved = await readStoredConfig()
+  const env = { ...process.env }
+  const clientId = saved?.public?.rcloneClientId?.trim()
+  if (clientId) env.RCLONE_DRIVE_CLIENT_ID = clientId
+  if (saved?.secrets?.rcloneClientSecret) {
+    if (!await safeStorage.isAsyncEncryptionAvailable()) {
+      throw new Error('Penyimpanan aman sistem operasi tidak tersedia untuk membaca Google Client Secret.')
+    }
+    env.RCLONE_DRIVE_CLIENT_SECRET = await decryptStoredString(Buffer.from(saved.secrets.rcloneClientSecret, 'base64'))
+  }
+  return env
+}
+
+function rcloneAccountFromOutput(output) {
+  let parsed
+  try {
+    parsed = JSON.parse(output)
+  } catch {
+    parsed = null
+  }
+
+  const values = []
+  const visit = (value) => {
+    if (!value || typeof value !== 'object') return
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item === 'string' && /email|user|account|display.?name|^name$/i.test(key)) {
+        values.push({ key: key.toLowerCase(), value: item.trim() })
+      } else if (item && typeof item === 'object') {
+        visit(item)
+      }
+    }
+  }
+  visit(parsed)
+
+  const preferred = values.find(({ key, value }) => /email/.test(key) && value)
+    ?? values.find(({ key, value }) => /display.?name|^name$/.test(key) && value)
+    ?? values.find(({ value }) => value)
+  return preferred?.value ?? ''
+}
+
+async function rcloneAccount(settings) {
+  try {
+    const result = await runRclone(settings, 'userinfo')
+    return rcloneAccountFromOutput(result.stdout)
+  } catch {
+    return ''
+  }
+}
+
+async function reconnectRclone(settings) {
+  const { executable, args: baseArgs } = rcloneArguments(settings, 'userinfo')
+  const args = baseArgs.slice(0, -4)
+  const remote = settings.remote.trim()
+  args.push('config', 'reconnect', `${remote}:`)
+  const env = await rcloneEnvironment()
+
+  return new Promise((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+    const child = spawn(executable, args, { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+    const answered = new Set()
+    const timer = setTimeout(() => {
+      child.kill()
+      reject(new Error('Waktu menghubungkan Google Drive habis. Coba lagi dan selesaikan login Google yang terbuka.'))
+    }, 180000)
+
+    const answerPrompt = (text, label, pattern, answer = 'y') => {
+      if (!answered.has(label) && pattern.test(text)) {
+        answered.add(label)
+        child.stdin.write(`${answer}\n`)
+      }
+    }
+    const collect = (target) => (chunk) => {
+      const text = chunk.toString()
+      if (target === 'stdout') stdout = `${stdout}${text}`.slice(-50000)
+      else stderr = `${stderr}${text}`.slice(-50000)
+      const combined = `${stdout}\n${stderr}`
+      answerPrompt(combined, 'refresh-token', /already have a token[\s\S]{0,500}y\/n>/i)
+      answerPrompt(combined, 'auto-config', /use auto config\?[\s\S]{0,500}y\/n>/i)
+      answerPrompt(combined, 'shared-drive', /configure (?:this as a )?shared drive[\s\S]{0,500}y\/n>/i, 'n')
+    }
+    child.stdout.on('data', collect('stdout'))
+    child.stderr.on('data', collect('stderr'))
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      reject(new Error(`rclone gagal dijalankan: ${error.message}`))
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      if (code === 0) {
+        resolve()
+        return
+      }
+      const details = `${stderr}\n${stdout}`
+      if (/config file.*not found|remote .*not found|didn't find section/i.test(details)) {
+        reject(new Error('Remote belum tersedia di file config rclone. Buat remote Google Drive terlebih dahulu, lalu isi nama remote dan lokasi file config di sini.'))
+        return
+      }
+      reject(new Error('Login Google Drive gagal atau dibatalkan. Periksa internet, remote, dan file config rclone.'))
+    })
+  })
 }
 
 function timestampFolderName(date = new Date()) {
@@ -205,7 +344,7 @@ function validateSessionFiles(files) {
 }
 
 function validateSessionMetadata(metadata) {
-  const customer = validateCustomer({ name: metadata?.customerName, email: metadata?.customerEmail })
+  const customer = validateCustomer({ email: metadata?.customerEmail })
   const operationMode = metadata?.operationMode
   const paymentStatus = metadata?.paymentStatus
   const experience = metadata?.experience
@@ -236,9 +375,7 @@ async function saveSession(event, payload) {
   if (metadata.operationMode !== configuredMode) throw new Error('Mode booth berubah. Silakan mulai sesi baru.')
   if (metadata.paymentStatus === 'paid') {
     const payment = verifiedPaymentOrders.get(metadata.paymentOrderId)
-    if (!payment?.verified || payment.amount !== sessionPrice(savedConfig, metadata.experience)) {
-      throw new Error('Pembayaran sesi belum terverifikasi untuk jumlah yang sesuai.')
-    }
+    if (!payment?.verified) throw new Error('Pembayaran sesi belum terverifikasi.')
   }
   const root = await sessionStoragePath()
   await fs.mkdir(root, { recursive: true })
@@ -271,8 +408,9 @@ async function saveSession(event, payload) {
     throw error
   }
 
-  let backupSent = false
-  let backupError = ''
+  let driveUploaded = false
+  let driveLink = ''
+  let driveError = ''
   if (savedConfig?.public?.rcloneEnabled === 'true') {
     try {
       const settings = {
@@ -281,14 +419,24 @@ async function saveSession(event, payload) {
         folder: savedConfig.public.rcloneFolder,
         configPath: savedConfig.public.rcloneConfigPath,
       }
-      await runRclone(settings, 'copy', directoryPath)
-      backupSent = true
+      await runRclone(settings, 'copy-images', directoryPath, normalizedFiles.map(({ name }) => name))
+      driveUploaded = true
+      const linkResult = await runRclone(settings, 'link', directoryName)
+      const candidateLink = linkResult.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? ''
+      let parsedLink
+      try {
+        parsedLink = new URL(candidateLink)
+      } catch {
+        throw new Error('rclone tidak mengembalikan link folder Google Drive yang valid.')
+      }
+      if (parsedLink.protocol !== 'https:') throw new Error('rclone tidak mengembalikan link folder HTTPS yang valid.')
+      driveLink = parsedLink.toString()
     } catch (error) {
-      backupError = error instanceof Error ? error.message : 'Backup rclone gagal.'
+      driveError = error instanceof Error ? error.message : 'Upload foto ke Google Drive gagal.'
     }
   }
 
-  return { saved: true, directory: directoryPath, backupSent, backupError }
+  return { saved: true, directory: directoryPath, driveUploaded, driveLink, driveError }
 }
 
 async function loadConfig(event) {
@@ -300,6 +448,8 @@ async function loadConfig(event) {
       storagePath: defaultSessionStoragePath(),
       midtransServerKey: '',
       midtransServerKeyConfigured: false,
+      rcloneClientSecret: '',
+      rcloneClientSecretConfigured: false,
     }
     const config = Object.fromEntries(
       allowedFields
@@ -315,6 +465,8 @@ async function loadConfig(event) {
     }
     config.midtransServerKey = ''
     config.midtransServerKeyConfigured = Boolean(saved.secrets?.midtransServerKey && encryptionAvailable)
+    config.rcloneClientSecret = ''
+    config.rcloneClientSecretConfigured = Boolean(saved.secrets?.rcloneClientSecret && encryptionAvailable)
     config.storagePath = normalizeStoragePath(config.storagePath)
     return config
   } catch (error) {
@@ -323,11 +475,27 @@ async function loadConfig(event) {
   }
 }
 
+async function readConfigRevision() {
+  try {
+    const stats = await fs.stat(configPath())
+    return `${stats.mtimeMs}:${stats.size}`
+  } catch (error) {
+    if (error.code === 'ENOENT') return ''
+    throw error
+  }
+}
+
+async function getConfigRevision(event) {
+  if (!isTrustedRenderer(event)) throw new Error('Akses konfigurasi ditolak.')
+  return readConfigRevision()
+}
+
 async function saveConfig(event, input) {
   if (!isTrustedRenderer(event)) throw new Error('Akses konfigurasi ditolak.')
   const previous = await readStoredConfig()
   const config = Object.fromEntries(allowedFields.map((field) => [field, String(input?.[field] ?? '')]))
   config.midtransServerKey = config.midtransServerKey.trim()
+  config.rcloneClientSecret = config.rcloneClientSecret.trim()
   config.storagePath = normalizeStoragePath(config.storagePath)
   const encryptionAvailable = await safeStorage.isAsyncEncryptionAvailable()
   if (!encryptionAvailable && secretFields.some((field) => config[field])) {
@@ -337,7 +505,7 @@ async function saveConfig(event, input) {
   const secrets = {}
   for (const field of secretFields) {
     delete publicConfig[field]
-    if (field === 'midtransServerKey' && !config[field] && previous?.secrets?.[field]) {
+    if (!config[field] && previous?.secrets?.[field]) {
       secrets[field] = previous.secrets[field]
       continue
     }
@@ -345,9 +513,8 @@ async function saveConfig(event, input) {
       ? (await safeStorage.encryptStringAsync(config[field])).toString('base64')
       : ''
   }
-  await fs.mkdir(path.dirname(configPath()), { recursive: true })
-  await fs.writeFile(configPath(), JSON.stringify({ public: publicConfig, secrets }, null, 2), 'utf8')
-  return { saved: true }
+  await writeConfigFile(JSON.stringify({ public: publicConfig, secrets }, null, 2))
+  return { saved: true, revision: await readConfigRevision() }
 }
 
 async function chooseStoragePath(event) {
@@ -378,7 +545,7 @@ async function createMidtransPayment(event, input) {
   const expectedAmount = sessionPrice(saved, experience)
   if (!Number.isSafeInteger(amount) || amount !== expectedAmount || amount < 1) throw new Error('Total pembayaran tidak sesuai dengan harga sesi di pengaturan booth.')
   const orderId = `CAPTURS-${Date.now()}-${randomUUID().slice(0, 8)}`
-  verifiedPaymentOrders.set(orderId, { amount, verified: false, createdAt: Date.now() })
+  verifiedPaymentOrders.set(orderId, { verified: false, createdAt: Date.now() })
   let result
   try {
     result = await requestMidtrans(saved, `${midtransSnapBaseUrl(saved)}/snap/v1/transactions`, {
@@ -412,9 +579,6 @@ async function verifyMidtransPayment(event, orderId) {
   const result = await requestMidtrans(saved, `${midtransBaseUrl(saved)}/v2/${encodeURIComponent(orderId)}/status`, {
     method: 'GET',
   })
-  if (Number(result.gross_amount) !== payment.amount) {
-    throw new Error('Nominal transaksi tidak sesuai dengan harga sesi booth.')
-  }
   const status = typeof result.transaction_status === 'string' ? result.transaction_status : 'unknown'
   const paid = status === 'settlement' || (status === 'capture' && result.fraud_status === 'accept')
   if (paid) payment.verified = true
@@ -427,9 +591,31 @@ async function testRclone(event, settings) {
   if (!isTrustedRenderer(event)) throw new Error('Akses pengujian rclone ditolak.')
   try {
     await runRclone(settings, 'test')
-    return { message: 'Koneksi rclone berhasil.' }
+    const account = await rcloneAccount(settings)
+    return { message: 'Koneksi rclone berhasil.', account }
   } catch (error) {
     throw new Error(error.message || 'Koneksi rclone gagal. Periksa executable, remote, dan file konfigurasi rclone.')
+  }
+}
+
+async function connectRclone(event, settings) {
+  if (!isTrustedRenderer(event)) throw new Error('Akses koneksi rclone ditolak.')
+  try {
+    const remotes = await runRclone(settings, 'listremotes')
+    const remoteName = settings.remote.trim()
+    const configuredRemotes = remotes.stdout.split(/\r?\n/).map((remote) => remote.trim().replace(/:$/, '')).filter(Boolean)
+    if (configuredRemotes.includes(remoteName)) await reconnectRclone(settings)
+    else {
+      const saved = await readStoredConfig()
+      if (!saved?.public?.rcloneClientId?.trim() || !saved?.secrets?.rcloneClientSecret) {
+        throw new Error('Untuk remote baru, isi Google OAuth Client ID dan Client Secret di Admin Settings terlebih dahulu.')
+      }
+      await runRclone(settings, 'create-drive')
+    }
+    await runRclone(settings, 'test')
+    return { message: 'Akun Google Drive berhasil dihubungkan.', account: await rcloneAccount(settings) }
+  } catch (error) {
+    throw new Error(error.message || 'Akun Google Drive gagal dihubungkan.')
   }
 }
 
@@ -463,6 +649,20 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   await ensureCaptursDirectories()
+  session.defaultSession.on('will-download', (event, item) => {
+    const mimeType = item.getMimeType().toLowerCase()
+    const filename = item.getFilename()
+    const imageFilename = /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/i.test(filename)
+    const initiatorOrigin = typeof item.getInitiatorOrigin === 'function' ? item.getInitiatorOrigin() : ''
+    const fromSnap = [initiatorOrigin, item.getURL()].some((value) => {
+      try {
+        return ['app.midtrans.com', 'app.sandbox.midtrans.com'].includes(new URL(value).hostname)
+      } catch {
+        return false
+      }
+    })
+    if (fromSnap || mimeType.startsWith('image/') || imageFilename) event.preventDefault()
+  })
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
     const videoOnly = permission === 'media'
       && details.mediaTypes?.includes('video')
@@ -470,12 +670,14 @@ app.whenReady().then(async () => {
     callback(Boolean(videoOnly))
   })
   ipcMain.handle('config:load', loadConfig)
+  ipcMain.handle('config:revision', getConfigRevision)
   ipcMain.handle('config:save', saveConfig)
   ipcMain.handle('session:save', saveSession)
   ipcMain.handle('storage:choose-path', chooseStoragePath)
   ipcMain.handle('payment:create-midtrans', createMidtransPayment)
   ipcMain.handle('payment:verify-midtrans', verifyMidtransPayment)
   ipcMain.handle('rclone:test', testRclone)
+  ipcMain.handle('rclone:connect', connectRclone)
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

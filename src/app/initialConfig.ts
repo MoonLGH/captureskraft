@@ -19,6 +19,9 @@ export const initialConfig: Config = {
   rcloneRemote: 'gdrive',
   rcloneFolder: 'Capturs',
   rcloneConfigPath: '',
+  rcloneClientId: '',
+  rcloneClientSecret: '',
+  rcloneClientSecretConfigured: false,
   cameraSettings: JSON.stringify(DEFAULT_CAMERA_SETTINGS),
   boothFrames: JSON.stringify(DEFAULT_BOOTH_FRAMES),
 }
