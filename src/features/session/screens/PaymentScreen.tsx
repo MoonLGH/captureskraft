@@ -5,7 +5,8 @@ import { money } from '../../../utils/format'
 
 type PaymentScreenProps = {
   experience: Experience
-  price: string
+  photoStripPrice: string
+  singlePhotoPrice: string
   mode: OperationMode
   environment: PaymentEnvironment
   clientKey: string
@@ -17,7 +18,7 @@ type PaymentScreenProps = {
 
 const AUTO_VERIFY_LIMIT_MS = 15 * 60 * 1000
 
-export function PaymentScreen({ experience, price, mode, environment, clientKey, serverKeyConfigured, onBack, onPaymentComplete, onSkipPayment }: PaymentScreenProps) {
+export function PaymentScreen({ experience, photoStripPrice, singlePhotoPrice, mode, environment, clientKey, serverKeyConfigured, onBack, onPaymentComplete, onSkipPayment }: PaymentScreenProps) {
   const [snapReady, setSnapReady] = useState(false)
   const [working, setWorking] = useState(false)
   const [pendingOrderId, setPendingOrderId] = useState('')
@@ -26,8 +27,8 @@ export function PaymentScreen({ experience, price, mode, environment, clientKey,
   const pollStartedAt = useRef(0)
   const pollTimer = useRef<number | undefined>(undefined)
   const total = experience === 'single'
-    ? Math.round((Number(price) || 35000) * 0.7)
-    : Number(price) || 35000
+    ? Number(singlePhotoPrice) || 24500
+    : Number(photoStripPrice) || 35000
   const configured = Boolean(clientKey.trim() && serverKeyConfigured)
 
   useEffect(() => () => {
@@ -143,7 +144,6 @@ export function PaymentScreen({ experience, price, mode, environment, clientKey,
   return (
     <section className="flow-page checkout-page">
       <div className="flow-heading">
-        <div className="eyebrow">LANGKAH 02 · PEMBAYARAN · {mode === 'booth' ? 'BOOTH MODE' : 'DEV MODE'}</div>
         <h2>Selesaikan pembayaran.</h2>
         <p>{mode === 'booth' ? 'Pembayaran wajib diselesaikan melalui Midtrans sebelum sesi foto.' : 'Uji alur pembayaran melalui Midtrans, atau lewati pembayaran untuk pengembangan.'}</p>
       </div>
@@ -153,14 +153,16 @@ export function PaymentScreen({ experience, price, mode, environment, clientKey,
         <div className="checkout-gateway"><span className="config-icon mongo-icon"><CreditCard size={20} /></span><span><b>Midtrans Snap</b><small>{environment === 'sandbox' ? 'Sandbox · transaksi percobaan' : 'Production · transaksi langsung'}</small></span><ShieldCheck size={18} /></div>
         {!configured && <div className="checkout-setup-note">Atur Client Key dan Server Key Midtrans di Admin Settings → Koneksi data untuk mengaktifkan pembayaran.</div>}
         {message && <p className="checkout-message" role="status">{message}</p>}
-        <button className="primary-cta compact checkout-pay-button" type="button" onClick={() => { void startPayment() }} disabled={!configured || !snapReady || working || Boolean(pendingOrderId)}>
-          <span>{working ? pendingOrderId ? 'Menunggu konfirmasi otomatis…' : 'Menyiapkan pembayaran…' : pendingOrderId ? 'Perlu bantuan petugas' : !configured ? 'Atur Midtrans di Admin Settings' : !snapReady ? 'Menyiapkan Midtrans…' : `Bayar ${money(total)}`}</span><span className="cta-icon"><ArrowRight size={20} /></span>
-        </button>
+        <div className="checkout-actions">
+          <button className="soft-button" type="button" onClick={onBack}><ArrowLeft size={18} /> Kembali</button>
+          <button className="primary-cta compact checkout-pay-button" type="button" onClick={() => { void startPayment() }} disabled={!configured || !snapReady || working || Boolean(pendingOrderId)}>
+            <span>{working ? pendingOrderId ? 'Menunggu konfirmasi otomatis…' : 'Menyiapkan pembayaran…' : pendingOrderId ? 'Perlu bantuan petugas' : !configured ? 'Atur Midtrans di Admin Settings' : !snapReady ? 'Menyiapkan Midtrans…' : `Bayar ${money(total)}`}</span><span className="cta-icon"><ArrowRight size={20} /></span>
+          </button>
+        </div>
         {mode === 'dev' && <button className="checkout-skip-button" type="button" onClick={onSkipPayment} disabled={working || Boolean(pendingOrderId)}>Lewati pembayaran (DEV mode)</button>}
       </div>
 
-      <div className="flow-actions"><button className="soft-button" type="button" onClick={onBack}><ArrowLeft size={18} /> Kembali</button></div>
-      <div className="flow-progress"><span className="active" /><span className="active" /><span /><span /><span /></div>
+      <div className="flow-progress"><span className="active" /><span className="active" /><span /><span /><span /><span /></div>
     </section>
   )
 }

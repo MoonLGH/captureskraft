@@ -6,11 +6,15 @@ import type { BoothFrame, FrameSlot } from '../../camera/boothFrames'
 import type { PhotoAdjustment, PhotoAdjustmentMap } from '../../camera/composeFrame'
 import type { Experience } from '../../../types/app'
 import { createSessionExportFiles, type SessionExportFile } from '../sessionExport'
+import { cameraPreviewCss, DEFAULT_SESSION_CAMERA_SETTINGS, type SessionCameraSettings } from '../../camera/cameraEffects'
 
 type ResultScreenProps = {
   experience: Experience
+  printerAutoPrint: boolean
   shots: string[]
+  liveClips: (Uint8Array | null)[]
   frame: BoothFrame | null
+  cameraSettings?: SessionCameraSettings
   onRetake: () => void
   onFinish: (files: SessionExportFile[]) => Promise<void>
   onSaveFramePreset: (frame: BoothFrame) => Promise<boolean>
@@ -20,7 +24,7 @@ function defaultAdjustment(slot: FrameSlot): PhotoAdjustment {
   return { imageZoom: slot.imageZoom, imageOffsetX: slot.imageOffsetX, imageOffsetY: slot.imageOffsetY }
 }
 
-export function ResultScreen({ experience, shots, frame, onRetake, onFinish, onSaveFramePreset }: ResultScreenProps) {
+export function ResultScreen({ experience, printerAutoPrint, shots, liveClips, frame, cameraSettings = DEFAULT_SESSION_CAMERA_SETTINGS, onRetake, onFinish, onSaveFramePreset }: ResultScreenProps) {
   const [adjustments, setAdjustments] = useState<PhotoAdjustmentMap>({})
   const [selectedSlotId, setSelectedSlotId] = useState(frame?.slots[0]?.id ?? '')
   const [previewReady, setPreviewReady] = useState(false)
@@ -32,6 +36,9 @@ export function ResultScreen({ experience, shots, frame, onRetake, onFinish, onS
   const frameShots = useMemo(() => frame && experience === 'single' && shots.length > 0
     ? Array.from({ length: photoIndexes.length }, () => shots[0])
     : shots, [experience, frame, photoIndexes.length, shots])
+  const frameLiveClips = useMemo(() => frame && experience === 'single' && liveClips.length > 0
+    ? Array.from({ length: photoIndexes.length }, () => liveClips[0] ?? null)
+    : liveClips, [experience, frame, liveClips, photoIndexes.length])
   const selectedSlot = frame?.slots.find((slot) => slot.id === selectedSlotId) ?? null
   const selectedPhotoIndex = selectedSlot ? photoIndexes.indexOf(selectedSlot.photoIndex) : -1
   const selectedPhotoAvailable = selectedPhotoIndex >= 0 && Boolean(frameShots[selectedPhotoIndex])
@@ -84,7 +91,7 @@ export function ResultScreen({ experience, shots, frame, onRetake, onFinish, onS
     setSessionSaveError('')
     try {
       if (!window.boothConfig?.saveSession) throw new Error('Penyimpanan sesi hanya tersedia di aplikasi desktop.')
-      const files = await createSessionExportFiles({ shots, frame, frameShots, adjustments })
+      const files = await createSessionExportFiles({ shots, liveClips: frameLiveClips, frame, frameShots, adjustments, cameraSettings })
       await onFinish(files)
     } catch (error) {
       setSessionSaveError(error instanceof Error ? error.message : 'Sesi gagal disimpan.')
@@ -106,6 +113,7 @@ export function ResultScreen({ experience, shots, frame, onRetake, onFinish, onS
             <InteractiveFramePreview
               frame={frame}
               shots={frameShots}
+              cameraSettings={cameraSettings}
               adjustments={adjustments}
               selectedSlotId={selectedSlotId}
               onSelectSlot={setSelectedSlotId}
@@ -140,13 +148,13 @@ export function ResultScreen({ experience, shots, frame, onRetake, onFinish, onS
           </aside>
         </div>
         : <div className={`result-strip ${experience === 'single' ? 'single-result' : ''}`}>
-          {shots.map((shot, index) => <div className="result-photo" key={`${index}-${shot.slice(-10)}`}><img src={shot} alt={`Hasil foto ${index + 1}`} /><span>CAPTURS · {String(index + 1).padStart(2, '0')}</span></div>)}
+          {shots.map((shot, index) => <div className="result-photo" key={`${index}-${shot.slice(-10)}`}><img src={shot} alt={`Hasil foto ${index + 1}`} style={{ filter: cameraPreviewCss(cameraSettings) }} /><span>CAPTURS · {String(index + 1).padStart(2, '0')}</span></div>)}
           <span className="result-brand">CAPTURS PHOTOBOOTH · JAKARTA</span>
         </div>}
 
       {sessionSaveError && <p className="session-save-error" role="alert">{sessionSaveError}</p>}
-      <div className="result-actions"><button className="soft-button" onClick={onRetake} disabled={savingSession}><RefreshCw size={17} /> Foto ulang</button><button className="primary-cta compact" onClick={() => { void saveSession() }} disabled={previewIsLoading || savingSession}><span>{savingSession ? 'Menyimpan sesi…' : previewIsLoading ? 'Menyiapkan hasil…' : 'Simpan & cetak foto'}</span><span className="cta-icon"><ArrowRight size={20} /></span></button></div>
-      <div className="print-note"><Printer size={15} /> Printer akan mulai setelah sesi tersimpan.</div>
+      <div className="result-actions"><button className="soft-button" onClick={onRetake} disabled={savingSession}><RefreshCw size={17} /> Foto ulang</button><button className="primary-cta compact" onClick={() => { void saveSession() }} disabled={previewIsLoading || savingSession}><span>{savingSession ? 'Menyimpan sesi…' : previewIsLoading ? 'Menyiapkan hasil…' : printerAutoPrint ? 'Simpan & cetak foto' : 'Simpan sesi'}</span><span className="cta-icon"><ArrowRight size={20} /></span></button></div>
+      <div className="print-note"><Printer size={15} /> {printerAutoPrint ? 'Hasil foto akan dikirim ke printer setelah sesi tersimpan.' : 'Sesi disimpan tanpa cetak otomatis.'}</div>
     </section>
   )
 }

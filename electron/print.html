@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Capturs print</title>
+  <style>
+    @page { margin: 0; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; }
+    body { display: grid; place-items: center; overflow: hidden; color: #222; background: #fff; font-family: Arial, sans-serif; }
+    img { display: block; width: 100%; height: 100%; object-fit: contain; }
+    #test-page { display: none; text-align: center; }
+    #test-page h1 { margin: 0 0 12px; font-size: 30px; }
+    #test-page p { margin: 0; color: #555; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <img id="photo" alt="Hasil foto">
+  <main id="test-page"><h1>Capturs Photobooth</h1><p>Halaman tes printer berhasil dicetak.</p></main>
+  <script>
+    window.preparePrint = async () => {
+      const params = new URLSearchParams(window.location.search)
+      const photo = document.querySelector('#photo')
+      const testPage = document.querySelector('#test-page')
+      if (params.get('test') === '1') {
+        photo.style.display = 'none'
+        testPage.style.display = 'block'
+        return true
+      }
+      photo.src = params.get('image') || ''
+      await photo.decode()
+      return true
+    }
+  </script>
+</body>
+</html>

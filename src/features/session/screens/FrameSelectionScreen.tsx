@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, Image as ImageIcon } from 'lucide-react'
+import { ArrowRight, Check, Image as ImageIcon } from 'lucide-react'
 import type { Experience } from '../../../types/app'
 import { getFramePhotoIndexes, type BoothFrame } from '../../camera/boothFrames'
 import { FrameSlotPreview } from '../components/FrameSlotPreview'
@@ -7,13 +7,12 @@ type FrameSelectionScreenProps = {
   experience: Experience
   frames: BoothFrame[]
   selectedFrameId: string | null | undefined
+  loadingFrame?: boolean
   onSelectFrame: (frameId: string | null) => void
-  onBack: () => void
   onContinue: () => void
 }
 
-export function FrameSelectionScreen({ experience, frames, selectedFrameId, onSelectFrame, onBack, onContinue }: FrameSelectionScreenProps) {
-  const previewHeight = Math.min(230, Math.max(120, window.innerHeight * 0.22))
+export function FrameSelectionScreen({ experience, frames, selectedFrameId, loadingFrame = false, onSelectFrame, onContinue }: FrameSelectionScreenProps) {
   const noFrameSelected = selectedFrameId === null
   const hasSelection = noFrameSelected || frames.some((frame) => frame.id === selectedFrameId)
 
@@ -36,11 +35,12 @@ export function FrameSelectionScreen({ experience, frames, selectedFrameId, onSe
                 {frames.map((frame) => {
                   const selected = selectedFrameId === frame.id
                   const count = experience === 'strip' ? getFramePhotoIndexes(frame).length || 3 : 1
-                  const previewWidth = Math.round(previewHeight * frame.width / frame.height)
-                  return <button className={`frame-gallery-card ${selected ? 'selected' : ''}`} key={frame.id} style={{ width: `${previewWidth}px` }} type="button" aria-pressed={selected} onClick={() => onSelectFrame(frame.id)}>
-                    <div className="frame-gallery-art" style={{ width: '100%', height: `${previewHeight}px` }}><FrameSlotPreview frame={frame} experience={experience} className="frame-gallery-preview-viewport" /></div>
-                    <span className="frame-gallery-info"><b>{frame.name}</b><small>{count} {experience === 'strip' ? 'pose' : 'jepretan'} {'\u00b7'} {frame.slots.length} area foto</small></span>
-                    <span className="frame-gallery-select">{selected ? <><Check size={14} /> Dipilih</> : 'Pilih frame'}</span>
+                  return <button className={`frame-gallery-card ${selected ? 'selected' : ''}`} key={frame.id} type="button" aria-pressed={selected} onClick={() => onSelectFrame(frame.id)}>
+                    <div className="frame-gallery-art" style={{ aspectRatio: `${frame.width} / ${frame.height}`, height: 'auto' }}>
+                      <FrameSlotPreview frame={frame} experience={experience} className="frame-gallery-preview-viewport" compactBelow={160} />
+                      <span className="frame-gallery-info"><b>{frame.name}</b><small>{count} {experience === 'strip' ? 'pose' : 'jepretan'} {'\u00b7'} {frame.slots.length} area foto</small></span>
+                      <span className="frame-gallery-select">{selected ? <><Check size={14} /> Dipilih</> : 'Pilih frame'}</span>
+                    </div>
                   </button>
                 })}
               </div>
@@ -50,12 +50,11 @@ export function FrameSelectionScreen({ experience, frames, selectedFrameId, onSe
       </div>
 
       <div className="flow-actions frame-selection-actions">
-        <button className="soft-button" type="button" onClick={onBack}><ArrowLeft size={18} /> Kembali</button>
-        <button className="primary-cta compact" type="button" onClick={onContinue} disabled={!hasSelection}>
-          <span>{hasSelection ? 'Lanjut ke kamera' : 'Pilih frame untuk lanjut'}</span><span className="cta-icon"><ArrowRight size={20} /></span>
+        <button className="primary-cta compact" type="button" onClick={onContinue} disabled={!hasSelection || loadingFrame}>
+          <span>{loadingFrame ? 'Memuat frame…' : hasSelection ? 'Atur kamera' : 'Pilih frame untuk lanjut'}</span><span className="cta-icon"><ArrowRight size={20} /></span>
         </button>
       </div>
-      <div className="flow-progress"><span className="active" /><span className="active" /><span className="active" /><span className="active" /><span /></div>
+      <div className="flow-progress"><span className="active" /><span className="active" /><span className="active" /><span className="active" /><span /><span /></div>
     </section>
   )
 }

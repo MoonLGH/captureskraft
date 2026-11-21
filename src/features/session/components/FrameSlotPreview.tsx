@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Experience } from '../../../types/app'
 import { getFramePhotoIndexes, type BoothFrame } from '../../camera/boothFrames'
 
-export function FrameSlotPreview({ frame, experience, className = '' }: { frame: BoothFrame; experience: Experience; className?: string }) {
+export function FrameSlotPreview({ frame, experience, className = '', compactBelow }: { frame: BoothFrame; experience: Experience; className?: string; compactBelow?: number }) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
 
@@ -24,12 +24,16 @@ export function FrameSlotPreview({ frame, experience, className = '' }: { frame:
   const stageStyle = scale
     ? { width: `${frame.width * scale}px`, height: `${frame.height * scale}px` }
     : { aspectRatio: `${frame.width} / ${frame.height}`, width: '100%' }
+  const compactSlots = compactBelow !== undefined
+    && (viewportSize.width === 0 || viewportSize.height === 0 || Math.min(viewportSize.width, viewportSize.height) < compactBelow)
 
   return <div className={`frame-feature-stage-viewport ${className}`.trim()} ref={viewportRef}>
     <div className="frame-feature-stage" style={stageStyle}>
-      <img src={frame.dataUrl} alt={`Preview utuh frame ${frame.name}`} draggable={false} loading="lazy" />
+      {frame.dataUrl
+        ? <img src={frame.dataUrl} alt={`Preview utuh frame ${frame.name}`} draggable={false} loading="lazy" />
+        : <span className="frame-feature-empty-preview" style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#8b747f', fontSize: 12 }}>Preview dimuat saat frame dipilih</span>}
       {frame.slots.map((slot, index) => <div
-        className="frame-feature-slot"
+        className={`frame-feature-slot ${compactSlots ? 'frame-feature-slot-compact' : ''}`}
         key={slot.id}
         role="img"
         aria-label={`Slot ${index + 1}, foto ${experience === 'single' ? 1 : sourceIndexes.indexOf(slot.photoIndex) + 1}`}

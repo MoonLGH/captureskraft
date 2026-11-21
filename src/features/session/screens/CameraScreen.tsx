@@ -4,6 +4,7 @@ import type { Experience } from '../../../types/app'
 import { PhotoIllustration } from '../../../components/shared/PhotoIllustration'
 import type { BoothFrame } from '../../camera/boothFrames'
 import { LiveFrameCompositionPreview } from '../components/LiveFrameCompositionPreview'
+import { cameraPreviewCss, DEFAULT_SESSION_CAMERA_SETTINGS, type SessionCameraSettings } from '../../camera/cameraEffects'
 
 type CameraScreenProps = {
   experience: Experience
@@ -14,17 +15,19 @@ type CameraScreenProps = {
   cameraError: string
   countdown: number | null
   advanceCountdown: number | null
+  recordingSeconds: number | null
   retakeIndex: number | null
   reviewIndex: number | null
   capturing: boolean
   videoRef: RefObject<HTMLVideoElement | null>
+  cameraSettings?: SessionCameraSettings
   onCapture: () => void
   onRetakeShot: (index: number) => void
   onRetake: () => void
   onContinue: () => void
 }
 
-export function CameraScreen({ experience, frame, shots, shotLimit, cameraStream, cameraError, countdown, advanceCountdown, retakeIndex, reviewIndex, capturing, videoRef, onCapture, onRetakeShot, onRetake, onContinue }: CameraScreenProps) {
+export function CameraScreen({ experience, frame, shots, shotLimit, cameraStream, cameraError, countdown, advanceCountdown, recordingSeconds, retakeIndex, reviewIndex, capturing, videoRef, cameraSettings = DEFAULT_SESSION_CAMERA_SETTINGS, onCapture, onRetakeShot, onRetake, onContinue }: CameraScreenProps) {
   const [framePreviewWidth, setFramePreviewWidth] = useState(0)
   const isReviewingShot = advanceCountdown !== null && reviewIndex !== null
   const nextShotLabel = `Ambil foto ${shots.length + 1}`
@@ -32,21 +35,24 @@ export function CameraScreen({ experience, frame, shots, shotLimit, cameraStream
   const shutterLabel = capturing
     ? retakeIndex !== null ? `Mengulang foto ${retakeIndex + 1}…` : `Mengambil foto ${shots.length + 1}…`
     : isReviewingShot ? `Ambil ulang foto ${reviewIndex + 1}` : nextShotLabel
-  const statusTitle = capturing
+  const statusTitle = recordingSeconds !== null
+    ? 'LIVE PHOTO SEDANG DIREKAM'
+    : capturing
     ? shutterLabel
     : isReviewingShot ? `Ambil ulang foto ${reviewIndex + 1}?` : null
-  const statusCountdown = countdown ?? (isReviewingShot ? advanceCountdown : null)
+  const statusCountdown = recordingSeconds ?? countdown ?? (isReviewingShot ? advanceCountdown : null)
 
   return (
     <section className="camera-page">
       <div className="camera-layout">
         <div className="camera-view">
           {cameraStream
-            ? <video ref={videoRef} autoPlay playsInline muted className="camera-video" />
+            ? <video ref={videoRef} autoPlay playsInline muted className="camera-video" style={{ filter: cameraPreviewCss(cameraSettings) }} />
             : <div className="camera-placeholder"><PhotoIllustration /><div className="placeholder-label"><Camera size={16} /> {cameraError || 'Menyiapkan kamera…'}</div></div>}
           {statusTitle && <div className="countdown-overlay" aria-live="polite" aria-atomic="true">
             <div className="camera-status-title">{statusTitle}</div>
             {statusCountdown !== null && <strong className="camera-countdown-number">{statusCountdown}</strong>}
+            {recordingSeconds !== null && <div className="camera-status-hint">rekaman Live Photo 3 detik</div>}
             {isReviewingShot && <div className="camera-status-hint">tekan shutter button untuk retake</div>}
           </div>}
         </div>
@@ -61,7 +67,7 @@ export function CameraScreen({ experience, frame, shots, shotLimit, cameraStream
 
         <div className="camera-control-stack">
           {frame && frame.slots.length > 0 && <aside className="camera-frame-composition" style={framePreviewWidth > 0 ? { width: `${framePreviewWidth}px` } : undefined}>
-            <LiveFrameCompositionPreview frame={frame} shots={shots} experience={experience} videoRef={videoRef} retakePhotoIndex={retakeIndex} onPreviewWidthChange={setFramePreviewWidth} />
+            <LiveFrameCompositionPreview frame={frame} shots={shots} experience={experience} videoRef={videoRef} retakePhotoIndex={retakeIndex} onPreviewWidthChange={setFramePreviewWidth} cameraSettings={cameraSettings} />
           </aside>}
 
           <aside className={`capture-panel ${sessionComplete ? 'capture-panel-complete' : ''}`}>
@@ -73,7 +79,7 @@ export function CameraScreen({ experience, frame, shots, shotLimit, cameraStream
           </aside>
         </div>
 
-        <div className="flow-progress camera-flow-progress"><span className="active" /><span className="active" /><span className="active" /><span className="active" /><span className="active" /></div>
+        <div className="flow-progress camera-flow-progress"><span className="active" /><span className="active" /><span className="active" /><span className="active" /><span className="active" /><span className="active" /></div>
       </div>
     </section>
   )

@@ -7,12 +7,16 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "dev:webadmin": "npm --prefix webadmin run dev",
     "build": "tsc --noEmit && vite build",
+    "build:webadmin": "npm --prefix webadmin run build",
+    "preview:webadmin": "npm --prefix webadmin run preview",
     "preview": "vite preview",
     "dist:win": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
     "gif.js": "^0.2.0",
+    "googleapis": "^190.0.0",
     "lucide-react": "^1.73.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.3.1",
@@ -38,6 +42,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "tele/bot.cjs",
       "package.json"
     ],
     "win": {

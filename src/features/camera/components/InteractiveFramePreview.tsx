@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { drawFrameComposition, type PhotoAdjustment, type PhotoAdjustmentMap } from '../composeFrame'
 import { getFramePhotoIndexes, type BoothFrame, type FrameSlot } from '../boothFrames'
+import { DEFAULT_SESSION_CAMERA_SETTINGS, type SessionCameraSettings } from '../cameraEffects'
 
 type InteractiveFramePreviewProps = {
   frame: BoothFrame
@@ -11,6 +12,7 @@ type InteractiveFramePreviewProps = {
   onSelectSlot: (slotId: string) => void
   onChangeAdjustment: (slotId: string, adjustment: PhotoAdjustment) => void
   onReady: (ready: boolean) => void
+  cameraSettings?: SessionCameraSettings
 }
 
 type PreviewAssets = { artwork: HTMLImageElement; photos: Map<number, HTMLImageElement> }
@@ -37,7 +39,7 @@ function loadImage(source: string) {
   })
 }
 
-export function InteractiveFramePreview({ frame, shots, adjustments, selectedSlotId, onSelectSlot, onChangeAdjustment, onReady }: InteractiveFramePreviewProps) {
+export function InteractiveFramePreview({ frame, shots, adjustments, selectedSlotId, onSelectSlot, onChangeAdjustment, onReady, cameraSettings = DEFAULT_SESSION_CAMERA_SETTINGS }: InteractiveFramePreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const panRef = useRef<PanState | null>(null)
   const [assets, setAssets] = useState<PreviewAssets | null>(null)
@@ -82,7 +84,7 @@ export function InteractiveFramePreview({ frame, shots, adjustments, selectedSlo
     try {
       context.save()
       context.scale(scale, scale)
-      drawFrameComposition(context, frame, assets.photos, assets.artwork, adjustments)
+      drawFrameComposition(context, frame, assets.photos, assets.artwork, adjustments, cameraSettings)
       context.restore()
       setError('')
       onReady(true)
@@ -91,7 +93,7 @@ export function InteractiveFramePreview({ frame, shots, adjustments, selectedSlo
       setError('Preview hasil foto tidak dapat disusun.')
       onReady(true)
     }
-  }, [adjustments, assets, frame, onReady])
+  }, [adjustments, assets, cameraSettings, frame, onReady])
 
   const startPan = (event: ReactPointerEvent<HTMLDivElement>, slot: FrameSlot) => {
     event.preventDefault()

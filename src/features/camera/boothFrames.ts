@@ -15,6 +15,8 @@ export type BoothFrame = {
   id: string
   name: string
   dataUrl: string
+  thumbnailDataUrl?: string
+  assetHash?: string
   width: number
   height: number
   appliesTo: FrameApplicability
@@ -27,6 +29,8 @@ export type BoothFramesSettings = {
   frames: BoothFrame[]
   activeFrameId: string
 }
+
+export type BoothFrameAssetUpload = { frameId: string; dataUrl: string }
 
 export type BoothFramePreset = {
   format: 'capturs-booth-frame'
@@ -46,7 +50,11 @@ export function createId(prefix = 'frame') {
 function parseFrame(value: unknown): BoothFrame | null {
   if (!value || typeof value !== 'object') return null
   const frame = value as Partial<BoothFrame>
-  if (typeof frame.dataUrl !== 'string' || !frame.dataUrl.startsWith('data:image/png;base64,')) return null
+  const fullDataUrl = typeof frame.dataUrl === 'string' && frame.dataUrl.startsWith('data:image/png;base64,') ? frame.dataUrl : ''
+  const thumbnailDataUrl = typeof frame.thumbnailDataUrl === 'string' && frame.thumbnailDataUrl.startsWith('data:image/png;base64,')
+    ? frame.thumbnailDataUrl
+    : ''
+  if (!fullDataUrl && !thumbnailDataUrl && typeof frame.assetHash !== 'string') return null
   if (typeof frame.width !== 'number' || typeof frame.height !== 'number'
     || !Number.isFinite(frame.width) || !Number.isFinite(frame.height) || frame.width <= 0 || frame.height <= 0) return null
 
@@ -74,7 +82,9 @@ function parseFrame(value: unknown): BoothFrame | null {
   return {
     id: typeof frame.id === 'string' ? frame.id : createId(),
     name: typeof frame.name === 'string' && frame.name ? frame.name : 'Custom frame',
-    dataUrl: frame.dataUrl,
+    dataUrl: fullDataUrl || thumbnailDataUrl,
+    ...(thumbnailDataUrl ? { thumbnailDataUrl } : {}),
+    ...(typeof frame.assetHash === 'string' ? { assetHash: frame.assetHash } : {}),
     width: frame.width,
     height: frame.height,
     appliesTo: slotFrameApplicability(frame.appliesTo),
@@ -112,6 +122,27 @@ export function parseBoothFrames(value: string | undefined): BoothFramesSettings
 
 export function serializeBoothFrames(settings: BoothFramesSettings) {
   return JSON.stringify(settings)
+}
+
+export function serializeBoothFrameManifest(settings: BoothFramesSettings) {
+  return JSON.stringify({
+    activeFrameId: settings.activeFrameId,
+    frames: settings.frames.map((frame) => ({
+      id: frame.id,
+      name: frame.name,
+      width: frame.width,
+      height: frame.height,
+      appliesTo: frame.appliesTo,
+      slots: frame.slots,
+      ...(frame.thumbnailDataUrl ? { thumbnailDataUrl: frame.thumbnailDataUrl } : {}),
+      ...(frame.assetHash ? { assetHash: frame.assetHash } : {}),
+      dataUrl: frame.thumbnailDataUrl ?? '',
+    })),
+  })
+}
+
+export function isFullBoothFrameDataUrl(value: string, thumbnailDataUrl = '') {
+  return value.startsWith('data:image/png;base64,') && value !== thumbnailDataUrl
 }
 
 export function createFramePreset(frame: BoothFrame): BoothFramePreset {

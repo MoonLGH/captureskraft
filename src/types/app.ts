@@ -1,5 +1,5 @@
-export type Screen = 'home' | 'experience' | 'payment' | 'customer' | 'frameSelect' | 'camera' | 'result' | 'saved' | 'admin'
-export type AdminTab = 'overview' | 'connections' | 'booth' | 'camera' | 'frames' | 'sync'
+export type Screen = 'home' | 'experience' | 'payment' | 'customer' | 'frameSelect' | 'cameraSettings' | 'camera' | 'result' | 'saved' | 'admin' | 'maintenance'
+export type AdminTab = 'overview' | 'connections' | 'booth' | 'camera' | 'frames' | 'printer' | 'sync'
 export type Experience = 'single' | 'strip'
 export type PaymentStatus = 'paid' | 'skipped' | 'event'
 export type OperationMode = 'dev' | 'booth' | 'event'
@@ -8,23 +8,32 @@ export type PaymentEnvironment = 'sandbox' | 'production'
 export type Config = {
   storeName: string
   storeId: string
-  price: string
+  photoStripPrice: string
+  singlePhotoPrice: string
+  sessionTimeoutMinutes: string
   mongoUri: string
   syncUrl: string
+  syncToken: string
+  syncTokenConfigured: boolean
+  telegramBotToken: string
+  telegramBotTokenConfigured: boolean
+  telegramChatId: string
   storagePath: string
   operationMode: OperationMode
   paymentEnvironment: PaymentEnvironment
   midtransClientKey: string
   midtransServerKey: string
   midtransServerKeyConfigured: boolean
-  rcloneEnabled: string
-  rcloneExecutable: string
-  rcloneRemote: string
-  rcloneFolder: string
-  rcloneConfigPath: string
-  rcloneClientId: string
-  rcloneClientSecret: string
-  rcloneClientSecretConfigured: boolean
+  googleDriveEnabled: string
+  googleDriveRetentionDays: string
+  googleDriveFolder: string
+  googleDriveClientId: string
+  googleDriveAccountEmail: string
   cameraSettings: string
   boothFrames: string
+  printerName: string
+  printerAutoPrint: string
+  printerPaperSize: string
+  printerCopies: string
+  printerColor: string
 }

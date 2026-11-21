@@ -11,12 +11,14 @@ import { HomeScreen } from '../features/session/screens/HomeScreen'
 import { ResultScreen } from '../features/session/screens/ResultScreen'
 import { SavedScreen } from '../features/session/screens/SavedScreen'
 import { FrameSelectionScreen } from '../features/session/screens/FrameSelectionScreen'
+import { CameraSettingsScreen } from '../features/session/screens/CameraSettingsScreen'
 import { PaymentScreen } from '../features/session/screens/PaymentScreen'
 import { CustomerDetailsScreen } from '../features/session/screens/CustomerDetailsScreen'
-import type { SessionExportFile } from '../features/session/sessionExport'
+import { createSessionExportFiles, type SessionExportFile } from '../features/session/sessionExport'
+import { DEFAULT_SESSION_CAMERA_SETTINGS, type SessionCameraSettings } from '../features/camera/cameraEffects'
 import { cameraTrackConstraints, parseCameraSettings, parseLegacyBoothFrame, serializeCameraSettings } from '../features/camera/cameraSettings'
-import { getFramePhotoIndexes, parseBoothFrames, serializeBoothFrames } from '../features/camera/boothFrames'
-import type { BoothFrame } from '../features/camera/boothFrames'
+import { getFramePhotoIndexes, isFullBoothFrameDataUrl, parseBoothFrames, serializeBoothFrameManifest } from '../features/camera/boothFrames'
+import type { BoothFrame, BoothFrameAssetUpload } from '../features/camera/boothFrames'
 
 function normalizeStoredConfig(stored: Partial<Config>): Partial<Config> {
   const parsedFrames = parseBoothFrames(stored.boothFrames)
@@ -27,12 +29,74 @@ function normalizeStoredConfig(stored: Partial<Config>): Partial<Config> {
   return {
     ...stored,
     cameraSettings: serializeCameraSettings(parseCameraSettings(stored.cameraSettings)),
-    boothFrames: serializeBoothFrames(boothFrames),
+    boothFrames: serializeBoothFrameManifest(boothFrames),
   }
 }
 
+function updateCloudApplyPermissions(configAllowed: boolean, frameAllowed: boolean) {
+  const bridge = window.boothConfig
+  if (bridge?.setCloudApplyAllowed) return bridge.setCloudApplyAllowed(configAllowed, frameAllowed).then(() => {})
+  return Promise.all([
+    bridge?.setSyncApplyAllowed?.(configAllowed),
+    bridge?.setFrameSyncApplyAllowed?.(frameAllowed),
+  ]).then(() => {})
+}
+
+function recordCameraClip(stream: MediaStream, onRecorder: (recorder: MediaRecorder) => void): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const mimeType = ['video/mp4;codecs=avc1', 'video/mp4;codecs=vp9', 'video/mp4']
+      .find((candidate) => MediaRecorder.isTypeSupported(candidate))
+    if (!mimeType) {
+      reject(new Error('Format MP4 tidak didukung untuk merekam Live Photo di perangkat ini.'))
+      return
+    }
+    let recorder: MediaRecorder
+    try {
+      recorder = new MediaRecorder(stream, { mimeType })
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error('Perekaman Live Photo tidak tersedia.'))
+      return
+    }
+
+    const chunks: BlobPart[] = []
+    let stopTimer = 0
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data)
+    }
+    recorder.onerror = () => reject(new Error('Klip Live Photo gagal direkam.'))
+    recorder.onstop = () => {
+      window.clearTimeout(stopTimer)
+      const clip = new Blob(chunks, { type: recorder.mimeType || 'video/mp4' })
+      if (clip.size === 0) {
+        reject(new Error('Klip Live Photo kosong.'))
+        return
+      }
+      void clip.arrayBuffer().then((buffer) => resolve(new Uint8Array(buffer)), reject)
+    }
+
+    try {
+      onRecorder(recorder)
+      recorder.start()
+      stopTimer = window.setTimeout(() => {
+        if (recorder.state !== 'inactive') recorder.stop()
+      }, 3000)
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error('Perekaman Live Photo gagal dimulai.'))
+    }
+  })
+}
+
 function App() {
-  const [screen, setScreen] = useState<Screen>('home')
+  const [screen, setScreenState] = useState<Screen>('home')
+  const screenRef = useRef<Screen>('home')
+  const maintenancePendingRef = useRef(false)
+  const setScreen = (nextScreen: Screen) => {
+    if (nextScreen === 'home' && maintenancePendingRef.current) nextScreen = 'maintenance'
+    screenRef.current = nextScreen
+    setScreenState(nextScreen)
+    const sessionRunning = sessionStartedAtRef.current > 0 || !['home', 'admin', 'maintenance'].includes(nextScreen)
+    void window.boothConfig?.setSessionActive?.(sessionRunning).catch(() => {})
+  }
   const [adminTab, setAdminTab] = useState<AdminTab>('overview')
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [password, setPassword] = useState('')
@@ -42,12 +106,24 @@ function App() {
   const [customerEmail, setCustomerEmail] = useState('')
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus | null>(null)
   const [paymentOrderId, setPaymentOrderId] = useState('')
+  const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null)
+  const [sessionRemainingMs, setSessionRemainingMs] = useState<number | null>(null)
   const [deliveryStatus, setDeliveryStatus] = useState('')
+  const [printError, setPrintError] = useState('')
   const [driveLink, setDriveLink] = useState('')
+  const [driveExpiresAt, setDriveExpiresAt] = useState('')
+  const [driveUploadStatus, setDriveUploadStatus] = useState<'disabled' | 'uploading' | 'uploaded' | 'error'>('disabled')
+  const [driveUploadError, setDriveUploadError] = useState('')
+  const activeDriveSessionIdRef = useRef('')
+  const driveUploadUpdatesRef = useRef<Record<string, DriveUploadUpdate>>({})
+  const [savedPreviewFiles, setSavedPreviewFiles] = useState<{ image: Uint8Array | null; gif: Uint8Array | null; live: Uint8Array | null } | null>(null)
   const [selectedFrameId, setSelectedFrameId] = useState<string | null | undefined>(undefined)
+  const [sessionFrameAsset, setSessionFrameAsset] = useState<BoothFrame | null>(null)
+  const [sessionFrameLoading, setSessionFrameLoading] = useState(false)
   const [shots, setShots] = useState<string[]>([])
   const [sessionCount, setSessionCount] = useState(0)
   const [toast, setToast] = useState('')
+  const [maintenanceMessage, setMaintenanceMessage] = useState('')
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null)
   const [cameraError, setCameraError] = useState('')
   const [countdown, setCountdown] = useState<number | null>(null)
@@ -55,20 +131,172 @@ function App() {
   const [retakeIndex, setRetakeIndex] = useState<number | null>(null)
   const [reviewIndex, setReviewIndex] = useState<number | null>(null)
   const [capturing, setCapturing] = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState<number | null>(null)
+  const [liveClips, setLiveClips] = useState<(Uint8Array | null)[]>([])
+  const [sessionCameraSettings, setSessionCameraSettings] = useState<SessionCameraSettings>(DEFAULT_SESSION_CAMERA_SETTINGS)
   const videoRef = useRef<HTMLVideoElement>(null)
   const configRevisionRef = useRef('')
+  const sessionFrameRequestRef = useRef(0)
   const configLoadedRef = useRef(false)
   const captureTimer = useRef<number | undefined>(undefined)
   const advanceTimer = useRef<number | undefined>(undefined)
+  const recordingTimer = useRef<number | undefined>(undefined)
+  const activeRecorderRef = useRef<MediaRecorder | null>(null)
+  const captureGenerationRef = useRef(0)
+  const sessionStartedAtRef = useRef(0)
+  const sessionDeadlineRef = useRef(0)
+  const sessionExpiredRef = useRef(false)
+  const sessionFinalizingRef = useRef(false)
+  const activeSessionIdRef = useRef('')
+  const sessionTimeoutHandlerRef = useRef<() => void>(() => {})
   const cameraSettings = useMemo(() => parseCameraSettings(config.cameraSettings), [config.cameraSettings])
   const boothFrames = useMemo(() => parseBoothFrames(config.boothFrames), [config.boothFrames])
   const compatibleFrames = boothFrames.frames.filter((frame) => frame.appliesTo === 'both' || frame.appliesTo === experience)
   const sessionFrame = typeof selectedFrameId === 'string'
-    ? compatibleFrames.find((frame) => frame.id === selectedFrameId) ?? null
+    ? sessionFrameAsset?.id === selectedFrameId ? sessionFrameAsset : compatibleFrames.find((frame) => frame.id === selectedFrameId) ?? null
     : null
   const shotLimit = experience === 'strip'
     ? sessionFrame ? getFramePhotoIndexes(sessionFrame).length || 3 : 3
     : 1
+
+  useEffect(() => {
+    if (screen !== 'saved') setSavedPreviewFiles(null)
+  }, [screen])
+
+  useEffect(() => window.boothConfig?.onTelegramChatId?.((chatId) => {
+    setConfig((current) => ({ ...current, telegramChatId: chatId }))
+    setToast(`Telegram Chat ID ${chatId} tersimpan otomatis.`)
+  }), [])
+
+  useEffect(() => window.boothConfig?.onDriveUploadStatus?.((update) => {
+    driveUploadUpdatesRef.current[update.sessionId] = update
+    if (activeDriveSessionIdRef.current !== update.sessionId) return
+    setDriveUploadStatus(update.status)
+    setDriveUploadError(update.error ?? '')
+    if (update.driveExpiresAt) setDriveExpiresAt(update.driveExpiresAt)
+  }), [])
+
+  const requestMaintenance = () => {
+    maintenancePendingRef.current = true
+    if (sessionStartedAtRef.current > 0) return
+    if (screenRef.current === 'home' || screenRef.current === 'admin') setScreen('maintenance')
+  }
+
+  useEffect(() => {
+    if (screen === 'maintenance') return
+    void updateCloudApplyPermissions(false, false).catch(() => {})
+  }, [screen])
+
+  useEffect(() => {
+    const bridge = window.boothConfig
+    if (!bridge?.checkCloudUpdates) return
+
+    let active = true
+    let checking = false
+    let intervalMs = 8000
+    let timeoutId: number | undefined
+    const schedule = (delay: number) => {
+      if (active) timeoutId = window.setTimeout(() => { void checkUpdates() }, delay)
+    }
+    const checkUpdates = async () => {
+      if (!active || checking) return
+      if (!configLoadedRef.current) {
+        schedule(intervalMs)
+        return
+      }
+      if (screenRef.current === 'maintenance') {
+        schedule(intervalMs)
+        return
+      }
+      checking = true
+      try {
+        const result = await bridge.checkCloudUpdates?.()
+        if (result?.remoteChanged) requestMaintenance()
+        if (result?.failed || result?.synced === false) intervalMs = Math.min(intervalMs * 2, 60_000)
+        else intervalMs = 8000
+      } catch {
+        intervalMs = Math.min(intervalMs * 2, 60_000)
+      } finally {
+        checking = false
+        schedule(intervalMs + Math.floor(Math.random() * 2000))
+      }
+    }
+    const onFocus = () => {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+      schedule(150)
+    }
+
+    schedule(Math.floor(Math.random() * 2000))
+    window.addEventListener('focus', onFocus)
+    return () => {
+      active = false
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (screen !== 'maintenance') return
+    let active = true
+    let processing = false
+    let retryTimer: number | undefined
+    const bridge = window.boothConfig
+    const applyPendingConfig = async () => {
+      if (!active || processing) return
+      processing = true
+      try {
+        if (bridge?.syncForMaintenance) {
+          const result = await bridge.syncForMaintenance()
+          if (result.waitingForWebAdmin) throw new Error(result.message || 'Menunggu WebAdmin menyelesaikan perubahan.')
+          if (result.busy) throw new Error('Sinkronisasi booth masih berlangsung.')
+          if (result.failed || result.synced !== true || result.allSynced !== true) {
+            throw new Error(result.message || 'Sinkronisasi belum selesai.')
+          }
+          setMaintenanceMessage('Konfigurasi, gambar frame, dan antrean data sudah tersinkron.')
+        }
+
+        let revision = await bridge?.getRevision?.() ?? ''
+        let stored = await bridge?.load() ?? {}
+        const latestRevision = await bridge?.getRevision?.() ?? ''
+        if (revision && latestRevision && revision !== latestRevision) {
+          stored = await bridge?.load() ?? {}
+          revision = await bridge?.getRevision?.() ?? ''
+          if (revision !== latestRevision) throw new Error('Konfigurasi masih berubah. Menunggu versi terbaru.')
+        } else revision = latestRevision || revision
+        if (!active) return
+
+        if (revision) configRevisionRef.current = revision
+        configLoadedRef.current = true
+        setConfig((current) => ({ ...current, ...normalizeStoredConfig(stored) }))
+        if (!active) return
+        if (bridge?.restartAfterMaintenance) {
+          setMaintenanceMessage('Sinkronisasi selesai. Memulai ulang aplikasi…')
+          const restart = await bridge.restartAfterMaintenance()
+          if (restart.restarting) return
+          if (restart.restartRequired !== false) throw new Error(restart.message || 'Aplikasi belum aman untuk dimulai ulang.')
+        }
+        maintenancePendingRef.current = false
+        setMaintenanceMessage('')
+        screenRef.current = 'home'
+        setScreenState('home')
+        setToast('Konfigurasi booth tersinkron.')
+      } catch (error) {
+        if (active) {
+          const message = error instanceof Error ? error.message : 'Sinkronisasi konfigurasi gagal.'
+          setMaintenanceMessage(`${message} Mencoba kembali otomatis.`)
+          retryTimer = window.setTimeout(() => { void applyPendingConfig() }, 5000)
+        }
+      } finally {
+        processing = false
+      }
+    }
+
+    void applyPendingConfig()
+    return () => {
+      active = false
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+    }
+  }, [screen])
 
   useEffect(() => {
     let active = true
@@ -96,7 +324,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if ((screen !== 'home' && screen !== 'frameSelect') || !window.boothConfig?.getRevision) return
+    if (screen !== 'home' || !window.boothConfig?.getRevision) return
     let active = true
     let refreshing = false
     const refreshExternalConfig = async () => {
@@ -106,12 +334,10 @@ function App() {
       try {
         const revision = await bridge.getRevision()
         if (!active || !revision || revision === configRevisionRef.current) return
-        const stored = await bridge.load()
         const latestRevision = await bridge.getRevision()
         if (!active || latestRevision !== revision) return
         configRevisionRef.current = latestRevision
-        setConfig((current) => ({ ...current, ...normalizeStoredConfig(stored) }))
-        setToast('Konfigurasi booth diperbarui.')
+        requestMaintenance()
       } catch (error) {
         if (active) setToast(error instanceof Error ? error.message : 'Konfigurasi gagal dimuat.')
       } finally {
@@ -141,8 +367,10 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [screen])
 
+  const cameraRequested = screen === 'camera' || screen === 'cameraSettings'
+
   useEffect(() => {
-    if (screen !== 'camera') return
+    if (!cameraRequested) return
     let active = true
     setCameraError('')
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -186,28 +414,36 @@ function App() {
         return null
       })
     }
-  }, [screen, cameraSettings.cameraDeviceId, cameraSettings.controls])
+  }, [cameraRequested, cameraSettings.cameraDeviceId, cameraSettings.controls])
 
   useEffect(() => {
     if (videoRef.current && cameraStream) videoRef.current.srcObject = cameraStream
-  }, [cameraStream])
+  }, [cameraStream, screen])
 
   useEffect(() => () => {
     window.clearInterval(captureTimer.current)
     window.clearInterval(advanceTimer.current)
+    window.clearInterval(recordingTimer.current)
+    if (activeRecorderRef.current?.state !== 'inactive') activeRecorderRef.current?.stop()
   }, [])
 
   useEffect(() => {
     if (screen === 'camera') return
     window.clearInterval(captureTimer.current)
     window.clearInterval(advanceTimer.current)
+    window.clearInterval(recordingTimer.current)
+    captureGenerationRef.current += 1
+    if (activeRecorderRef.current?.state !== 'inactive') activeRecorderRef.current?.stop()
+    activeRecorderRef.current = null
     captureTimer.current = undefined
     advanceTimer.current = undefined
+    recordingTimer.current = undefined
     setCountdown(null)
     setAdvanceCountdown(null)
     setRetakeIndex(null)
     setReviewIndex(null)
     setCapturing(false)
+    setRecordingSeconds(null)
   }, [screen])
 
   useEffect(() => {
@@ -225,18 +461,25 @@ function App() {
   const clearCaptureTimers = () => {
     window.clearInterval(captureTimer.current)
     window.clearInterval(advanceTimer.current)
+    window.clearInterval(recordingTimer.current)
     captureTimer.current = undefined
     advanceTimer.current = undefined
+    recordingTimer.current = undefined
   }
 
   const resetShots = () => {
     clearCaptureTimers()
+    captureGenerationRef.current += 1
+    if (activeRecorderRef.current?.state !== 'inactive') activeRecorderRef.current?.stop()
+    activeRecorderRef.current = null
     setShots([])
+    setLiveClips([])
     setCountdown(null)
     setAdvanceCountdown(null)
     setRetakeIndex(null)
     setReviewIndex(null)
     setCapturing(false)
+    setRecordingSeconds(null)
   }
 
   const startAdvanceDelay = (shotIndex: number) => {
@@ -268,18 +511,20 @@ function App() {
     setCapturing(true)
     setRetakeIndex(targetIndex ?? null)
     setCountdown(5)
+    const captureIndex = targetIndex ?? shots.length
+    const captureGeneration = captureGenerationRef.current
     let remaining = 5
     const timer = window.setInterval(() => {
       remaining -= 1
-      if (remaining > 0) {
+      if (remaining > 2) {
         setCountdown(remaining)
         return
       }
       window.clearInterval(timer)
       captureTimer.current = undefined
-      setCountdown(null)
+      setCountdown(2)
       const video = videoRef.current
-      let image = makeDemoShot((targetIndex ?? shots.length) + 1)
+      let image = makeDemoShot(captureIndex + 1)
       if (cameraStream && video && video.videoWidth > 0) {
         const canvas = document.createElement('canvas')
         canvas.width = video.videoWidth
@@ -292,28 +537,80 @@ function App() {
           image = canvas.toDataURL('image/jpeg', 0.92)
         }
       }
-      setShots((current) => {
-        if (targetIndex === undefined) return [...current, image]
-        if (targetIndex < 0 || targetIndex >= current.length) return current
-        const updated = [...current]
-        updated[targetIndex] = image
-        return updated
+
+      setCountdown(null)
+      setRecordingSeconds(cameraStream ? 3 : null)
+      if (cameraStream) {
+        let seconds = 3
+        recordingTimer.current = window.setInterval(() => {
+          seconds -= 1
+          setRecordingSeconds(seconds > 0 ? seconds : null)
+          if (seconds <= 0) {
+            window.clearInterval(recordingTimer.current)
+            recordingTimer.current = undefined
+          }
+        }, 1000)
+      }
+
+      const clipPromise = cameraStream
+        ? recordCameraClip(cameraStream, (recorder) => { activeRecorderRef.current = recorder }).then((clip) => clip, (error) => {
+          setToast(error instanceof Error ? error.message : 'Live Photo gagal direkam.')
+          return null
+        })
+        : Promise.resolve(null)
+      void clipPromise.then((clip) => {
+        if (captureGeneration !== captureGenerationRef.current) return
+        activeRecorderRef.current = null
+        window.clearInterval(recordingTimer.current)
+        recordingTimer.current = undefined
+        setRecordingSeconds(null)
+        setShots((current) => {
+          if (targetIndex === undefined) return [...current, image]
+          if (targetIndex < 0 || targetIndex >= current.length) return current
+          const updated = [...current]
+          updated[targetIndex] = image
+          return updated
+        })
+        setLiveClips((current) => {
+          const updated = [...current]
+          if (targetIndex === undefined) updated.push(clip)
+          else if (targetIndex >= 0 && targetIndex < updated.length) updated[targetIndex] = clip
+          return updated
+        })
+        setRetakeIndex(null)
+        setCapturing(false)
+        startAdvanceDelay(captureIndex)
       })
-      setRetakeIndex(null)
-      setCapturing(false)
-      startAdvanceDelay(targetIndex ?? shots.length)
     }, 1000)
     captureTimer.current = timer
   }
 
   const beginSession = () => {
+    if (sessionStartedAtRef.current && !sessionExpiredRef.current && !sessionFinalizingRef.current) {
+      setToast('Sesi yang sudah dibayar masih aktif. Lanjutkan sesi tersebut sebelum memulai sesi baru.')
+      setScreen('frameSelect')
+      return
+    }
     resetShots()
+    setSessionCameraSettings(DEFAULT_SESSION_CAMERA_SETTINGS)
     setSelectedFrameId(undefined)
     setCustomerEmail('')
     setPaymentStatus(null)
     setPaymentOrderId('')
+    setSessionStartedAt(null)
+    setSessionRemainingMs(null)
+    sessionStartedAtRef.current = 0
+    sessionDeadlineRef.current = 0
+    sessionExpiredRef.current = false
+    sessionFinalizingRef.current = false
+    activeSessionIdRef.current = ''
     setDeliveryStatus('')
+    setPrintError('')
     setDriveLink('')
+    setDriveExpiresAt('')
+    setDriveUploadStatus('disabled')
+    setDriveUploadError('')
+    activeDriveSessionIdRef.current = ''
     setScreen('experience')
   }
 
@@ -322,36 +619,87 @@ function App() {
     setSelectedFrameId(undefined)
   }
 
+  const startPaidSession = () => {
+    const startedAt = Date.now()
+    sessionStartedAtRef.current = startedAt
+    sessionDeadlineRef.current = startedAt + (Number(config.sessionTimeoutMinutes) || 5) * 60_000
+    sessionExpiredRef.current = false
+    sessionFinalizingRef.current = false
+    activeSessionIdRef.current = `session-${startedAt}-${crypto.randomUUID().slice(0, 8)}`
+    setSessionStartedAt(startedAt)
+    setSessionRemainingMs(sessionDeadlineRef.current - startedAt)
+    setScreen('frameSelect')
+  }
+
   const continueToPayment = () => {
-    setSelectedFrameId(undefined)
-    if (config.operationMode === 'event') {
+    if (paymentStatus) {
+      setScreen('frameSelect')
+    } else if (config.operationMode === 'event') {
       setPaymentStatus('event')
-      setScreen('customer')
+      startPaidSession()
     } else setScreen('payment')
   }
 
   const paymentComplete = (orderId: string) => {
     setPaymentOrderId(orderId)
     setPaymentStatus('paid')
-    setScreen('customer')
+    startPaidSession()
   }
 
   const skipPayment = () => {
     if (config.operationMode !== 'dev') return
     setPaymentOrderId('')
     setPaymentStatus('skipped')
-    setScreen('customer')
+    startPaidSession()
   }
 
-  const continueToCamera = () => {
+  const continueToCamera = async () => {
     if (selectedFrameId === undefined) return
     if (typeof selectedFrameId === 'string' && !compatibleFrames.some((frame) => frame.id === selectedFrameId)) return
-    setScreen('camera')
+    if (typeof selectedFrameId === 'string') {
+      const frame = compatibleFrames.find((item) => item.id === selectedFrameId)
+      if (frame && !isFullBoothFrameDataUrl(frame.dataUrl, frame.thumbnailDataUrl ?? '') && sessionFrameAsset?.id !== frame.id) {
+        if (!window.boothConfig?.loadFrameAsset) return
+        setSessionFrameLoading(true)
+        try {
+          const dataUrl = await window.boothConfig.loadFrameAsset(frame.id)
+          const loadedFrame = { ...frame, dataUrl }
+          setSessionFrameAsset(loadedFrame)
+        } catch (error) {
+          setToast(error instanceof Error ? error.message : 'Gambar frame gagal dimuat.')
+          return
+        } finally {
+          setSessionFrameLoading(false)
+        }
+      }
+    }
+    setScreen('cameraSettings')
   }
+
+  const startCamera = () => setScreen('camera')
 
   const selectSessionFrame = (frameId: string | null) => {
     if (frameId !== selectedFrameId) resetShots()
     setSelectedFrameId(frameId)
+    setSessionFrameAsset(null)
+    setSessionFrameLoading(false)
+    const requestId = ++sessionFrameRequestRef.current
+    if (!frameId) return
+    const frame = compatibleFrames.find((item) => item.id === frameId)
+    if (!frame) return
+    if (isFullBoothFrameDataUrl(frame.dataUrl, frame.thumbnailDataUrl ?? '')) {
+      setSessionFrameAsset(frame)
+      return
+    }
+    if (!window.boothConfig?.loadFrameAsset) return
+    setSessionFrameLoading(true)
+    void window.boothConfig.loadFrameAsset(frameId).then((dataUrl) => {
+      if (sessionFrameRequestRef.current === requestId) setSessionFrameAsset({ ...frame, dataUrl })
+    }).catch((error) => {
+      if (sessionFrameRequestRef.current === requestId) setToast(error instanceof Error ? error.message : 'Gambar frame gagal dimuat.')
+    }).finally(() => {
+      if (sessionFrameRequestRef.current === requestId) setSessionFrameLoading(false)
+    })
   }
 
   const unlockAdmin = () => {
@@ -363,73 +711,202 @@ function App() {
     } else setPasswordError('Password belum tepat. Coba lagi.')
   }
 
-  const saveSettings = async () => {
+  const saveSettings = async (
+    frameAssets: BoothFrameAssetUpload[] = [],
+    configToSave: Config = config,
+    itemLabel = 'Konfigurasi',
+  ) => {
     try {
+      if (window.boothConfig && !configLoadedRef.current) throw new Error('Konfigurasi masih dimuat. Coba simpan lagi sebentar.')
+      let saveResult: Awaited<ReturnType<NonNullable<typeof window.boothConfig>['save']>> | undefined
       if (window.boothConfig) {
-        const result = await window.boothConfig.save(config)
-        if (result.revision) configRevisionRef.current = result.revision
+        saveResult = await window.boothConfig.save(configToSave, frameAssets)
+        if (saveResult.revision) configRevisionRef.current = saveResult.revision
+        const stored = await window.boothConfig.load()
+        if (typeof stored.boothFrames === 'string') setConfig((current) => ({ ...current, boothFrames: stored.boothFrames! }))
       }
-      if (window.boothConfig && (config.midtransServerKey.trim() || config.rcloneClientSecret.trim())) {
+      if (window.boothConfig && (configToSave.midtransServerKey.trim() || configToSave.syncToken.trim() || configToSave.telegramBotToken.trim())) {
         setConfig((current) => ({
           ...current,
-          ...(current.midtransServerKey.trim() ? { midtransServerKey: '', midtransServerKeyConfigured: true } : {}),
-          ...(current.rcloneClientSecret.trim() ? { rcloneClientSecret: '', rcloneClientSecretConfigured: true } : {}),
+          ...(configToSave.midtransServerKey.trim() ? { midtransServerKey: '', midtransServerKeyConfigured: true } : {}),
+          ...(configToSave.syncToken.trim() ? { syncToken: '', syncTokenConfigured: true } : {}),
+          ...(configToSave.telegramBotToken.trim() ? { telegramBotToken: '', telegramBotTokenConfigured: true } : {}),
         }))
       }
+      const syncMessage = saveResult?.syncStatus === 'synced'
+        ? ' Perubahan juga tersinkron ke web admin.'
+        : saveResult?.syncStatus === 'pending'
+          ? ` Sinkronisasi cloud tertunda${saveResult.syncError ? `: ${saveResult.syncError}` : '.'}`
+          : ''
+      const telegramMessage = saveResult?.telegramStatus === 'ready'
+        ? ' Log Telegram aktif.'
+        : saveResult?.telegramStatus === 'setup'
+          ? ' Token Telegram tersimpan. Kirim /id ke bot dari chat tujuan; Chat ID disimpan otomatis.'
+          : saveResult?.telegramStatus === 'pending'
+            ? ` Telegram belum tersambung${saveResult.telegramError ? `: ${saveResult.telegramError}` : '.'}`
+            : ''
       setToast(window.boothConfig
-        ? 'Konfigurasi tersimpan pada perangkat.'
+        ? `${itemLabel} tersimpan pada perangkat.${syncMessage}${telegramMessage}`
         : 'Mode preview: konfigurasi hanya tersimpan selama aplikasi terbuka.')
+      return true
     } catch (error) {
       setToast(error instanceof Error ? error.message : 'Konfigurasi gagal disimpan.')
+      return false
     }
   }
 
   const saveFrameCropPreset = async (updatedFrame: BoothFrame) => {
     const nextBoothFrames = {
       ...boothFrames,
-      frames: boothFrames.frames.map((frame) => frame.id === updatedFrame.id ? updatedFrame : frame),
+      frames: boothFrames.frames.map((frame) => frame.id === updatedFrame.id ? { ...updatedFrame, dataUrl: updatedFrame.thumbnailDataUrl ?? '' } : frame),
     }
-    const nextConfig = { ...config, boothFrames: serializeBoothFrames(nextBoothFrames) }
+    const nextConfig = { ...config, boothFrames: serializeBoothFrameManifest(nextBoothFrames) }
     setConfig(nextConfig)
+    return saveSettings([], nextConfig, 'Default crop')
+  }
+
+  const finishSession = async (files: SessionExportFile[], sessionOutcome: 'complete' | 'partial' = 'complete') => {
+    if (!window.boothConfig?.saveSession) throw new Error('Penyimpanan sesi hanya tersedia di aplikasi desktop.')
+    if (!paymentStatus) throw new Error('Status pembayaran sesi belum tersedia.')
+    sessionFinalizingRef.current = true
     try {
-      if (window.boothConfig) {
-        const result = await window.boothConfig.save(nextConfig)
-        if (result.revision) configRevisionRef.current = result.revision
-      }
-      setToast(window.boothConfig ? 'Default crop disimpan ke preset frame di perangkat.' : 'Default crop diperbarui untuk preview ini.')
-      return true
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : 'Preset frame gagal disimpan.')
-      return false
+      const receipt = await window.boothConfig.saveSession(files, {
+        customerEmail,
+        operationMode: config.operationMode,
+        paymentStatus,
+        paymentOrderId,
+        experience,
+        sessionStartedAt: new Date(sessionStartedAtRef.current || Date.now()).toISOString(),
+        sessionOutcome,
+      })
+      const delivery = receipt.driveLink
+        ? ''
+        : config.googleDriveEnabled !== 'true'
+          ? 'Foto tersimpan lokal. Upload Google Drive belum diaktifkan.'
+          : `Folder Google Drive gagal disiapkan${receipt.driveError ? `: ${receipt.driveError}` : '.'}`
+      const cloudStatus = config.syncUrl && config.syncTokenConfigured
+        ? receipt.syncQueued ? ' Laporan sesi masuk antrean sinkronisasi cloud.' : ` Sinkronisasi sesi belum disiapkan${receipt.syncQueueError ? `: ${receipt.syncQueueError}` : '.'}`
+        : ''
+      const printStatus = receipt.printed ? ' Foto berhasil dikirim ke printer.' : ''
+      setDeliveryStatus([delivery, printStatus, cloudStatus].filter(Boolean).join(''))
+      setPrintError(receipt.printError ?? '')
+      setDriveLink(receipt.driveLink)
+      setDriveExpiresAt(receipt.driveExpiresAt ?? '')
+      activeDriveSessionIdRef.current = receipt.sessionId
+      const driveUpdate = driveUploadUpdatesRef.current[receipt.sessionId]
+      setDriveUploadStatus(driveUpdate?.status ?? receipt.driveStatus)
+      setDriveUploadError(driveUpdate?.error ?? receipt.driveError ?? '')
+      setSavedPreviewFiles({
+        image: files.find((file) => file.name === 'Hasil.png')?.bytes ?? null,
+        gif: files.find((file) => file.name.toLowerCase().endsWith('.gif'))?.bytes ?? null,
+        live: files.find((file) => file.name.toLowerCase().endsWith('.mp4'))?.bytes ?? null,
+      })
+      sessionStartedAtRef.current = 0
+      sessionDeadlineRef.current = 0
+      sessionExpiredRef.current = true
+      activeSessionIdRef.current = ''
+      setSessionStartedAt(null)
+      setSessionRemainingMs(null)
+      setSessionCount((count) => count + 1)
+      setScreen('saved')
+    } finally {
+      sessionFinalizingRef.current = false
     }
   }
 
-  const finishSession = async (files: SessionExportFile[]) => {
-    if (!window.boothConfig?.saveSession) throw new Error('Penyimpanan sesi hanya tersedia di aplikasi desktop.')
-    if (!paymentStatus) throw new Error('Status pembayaran sesi belum tersedia.')
-    const receipt = await window.boothConfig.saveSession(files, {
-      customerEmail,
-      operationMode: config.operationMode,
-      paymentStatus,
-      paymentOrderId,
-      experience,
-    })
-    const delivery = receipt.driveLink
-      ? 'Foto berhasil diunggah. Pindai QR untuk membuka folder Google Drive.'
-      : config.rcloneEnabled !== 'true'
-        ? 'Foto tersimpan lokal. Upload Google Drive belum diaktifkan.'
-        : receipt.driveUploaded
-          ? `Foto sudah diunggah, tetapi link folder gagal dibuat${receipt.driveError ? `: ${receipt.driveError}` : '.'}`
-          : `Foto tersimpan lokal; upload Google Drive gagal${receipt.driveError ? `: ${receipt.driveError}` : '.'}`
-    setDeliveryStatus(delivery)
-    setDriveLink(receipt.driveLink)
-    setSessionCount((count) => count + 1)
-    setScreen('saved')
+  const expireActiveSession = async () => {
+    if (!sessionStartedAtRef.current || sessionFinalizingRef.current) return
+    if (shots.length === 0 || selectedFrameId === undefined) {
+      const shouldNotify = paymentStatus === 'paid' || paymentStatus === 'event'
+      let noticeError = ''
+      let noticeSynced = false
+      if (shouldNotify) {
+        try {
+          if (!window.boothConfig?.notifyAbandonedSession) throw new Error('Pengiriman email sesi hanya tersedia di aplikasi booth.')
+          const notification = await window.boothConfig.notifyAbandonedSession({
+            sessionId: activeSessionIdRef.current,
+            sessionStartedAt: new Date(sessionStartedAtRef.current).toISOString(),
+            customerEmail,
+            operationMode: config.operationMode,
+            paymentStatus,
+            paymentOrderId,
+            experience,
+          })
+          noticeSynced = notification.synced === true
+        } catch (error) {
+          noticeError = error instanceof Error ? error.message : 'Pemberitahuan sesi gagal masuk antrean email.'
+        }
+      }
+      sessionStartedAtRef.current = 0
+      sessionDeadlineRef.current = 0
+      sessionExpiredRef.current = true
+      activeSessionIdRef.current = ''
+      setSessionStartedAt(null)
+      setSessionRemainingMs(null)
+      setScreen('home')
+      setToast(noticeError || (shouldNotify
+        ? noticeSynced ? 'Sesi tanpa foto sudah dicatat di WebAdmin.' : 'Sesi tanpa foto masuk antrean lokal sampai booth terhubung ke WebAdmin.'
+        : 'Waktu sesi development habis. Tidak ada foto yang diambil.'))
+      return
+    }
+
+    sessionFinalizingRef.current = true
+    try {
+      let frameToSave = sessionFrame
+      if (typeof selectedFrameId === 'string' && frameToSave
+        && !isFullBoothFrameDataUrl(frameToSave.dataUrl, frameToSave.thumbnailDataUrl ?? '')) {
+        if (!window.boothConfig?.loadFrameAsset) throw new Error('File frame belum siap untuk membuat hasil sesi.')
+        const dataUrl = await window.boothConfig.loadFrameAsset(selectedFrameId)
+        frameToSave = { ...frameToSave, dataUrl }
+        setSessionFrameAsset(frameToSave)
+      }
+      const photoIndexes = frameToSave ? getFramePhotoIndexes(frameToSave) : []
+      const frameShots = frameToSave && experience === 'single' && shots.length > 0
+        ? Array.from({ length: photoIndexes.length }, () => shots[0])
+        : shots
+      const frameLiveClips = frameToSave && experience === 'single' && liveClips.length > 0
+        ? Array.from({ length: photoIndexes.length }, () => liveClips[0] ?? null)
+        : liveClips
+      const files = await createSessionExportFiles({
+        shots,
+        liveClips: frameLiveClips,
+        frame: frameToSave,
+        frameShots,
+        adjustments: {},
+        cameraSettings: sessionCameraSettings,
+      })
+      const sessionOutcome = shots.length < shotLimit ? 'partial' : 'complete'
+      await finishSession(files, sessionOutcome)
+      setToast(sessionOutcome === 'partial'
+        ? 'Waktu habis. Foto yang sudah diambil disimpan dan dikirim sebagai sesi parsial.'
+        : 'Waktu habis. Hasil foto disimpan dan dikirim.')
+    } catch (error) {
+      sessionFinalizingRef.current = false
+      setSessionRemainingMs(null)
+      setScreen('result')
+      setToast(`Waktu habis, tetapi penyimpanan otomatis gagal: ${error instanceof Error ? error.message : 'coba simpan hasil foto lagi.'}`)
+    }
   }
+
+  sessionTimeoutHandlerRef.current = () => { void expireActiveSession() }
+  useEffect(() => {
+    if (sessionStartedAt === null) return
+    const updateTimer = () => {
+      const remaining = Math.max(0, sessionDeadlineRef.current - Date.now())
+      setSessionRemainingMs(remaining)
+      if (remaining === 0 && !sessionExpiredRef.current && !sessionFinalizingRef.current) {
+        sessionExpiredRef.current = true
+        sessionTimeoutHandlerRef.current()
+      }
+    }
+    updateTimer()
+    const timerId = window.setInterval(updateTimer, 1000)
+    return () => window.clearInterval(timerId)
+  }, [sessionStartedAt, config.sessionTimeoutMinutes])
 
   const handleBack = () => {
     if (screen === 'customer') return
-    setScreen(screen === 'saved' ? 'home' : screen === 'result' ? 'camera' : screen === 'camera' ? 'frameSelect' : screen === 'frameSelect' ? 'customer' : screen === 'payment' ? 'experience' : screen === 'experience' ? 'home' : 'home')
+    setScreen(screen === 'saved' ? 'home' : screen === 'result' ? 'camera' : screen === 'camera' ? 'cameraSettings' : screen === 'cameraSettings' ? 'frameSelect' : screen === 'frameSelect' ? 'customer' : screen === 'payment' ? 'customer' : screen === 'experience' ? 'home' : 'home')
   }
   const retryResult = () => {
     resetShots()
@@ -437,18 +914,25 @@ function App() {
   }
 
   return (
-    <div className={`app-shell ${screen === 'admin' ? 'app-admin-side' : 'app-user-side'} ${screen === 'home' ? 'app-home' : ''} ${screen === 'camera' ? 'app-camera' : ''}`}>
-      {screen !== 'admin' && <AppHeader screen={screen} boothName={config.storeName} onHome={() => setScreen('home')} onBack={handleBack} />}
+    <div className={`app-shell ${screen === 'admin' ? 'app-admin-side' : 'app-user-side'} ${screen === 'home' ? 'app-home' : ''} ${screen === 'camera' ? 'app-camera' : ''} ${screen === 'maintenance' ? 'app-maintenance' : ''}`}>
+      {screen !== 'admin' && screen !== 'maintenance' && <AppHeader screen={screen} boothName={config.storeName} sessionRemainingMs={sessionRemainingMs} onHome={() => setScreen('home')} onBack={handleBack} />}
 
       <main className={`main-content ${screen === 'camera' ? 'camera-main-content' : ''}`}>
         {screen === 'home' && <HomeScreen boothName={config.storeName} onBeginSession={beginSession} />}
-        {screen === 'experience' && <ExperienceScreen experience={experience} price={config.price} paymentCoveredByEvent={config.operationMode === 'event'} onSelectExperience={selectExperience} onBack={() => setScreen('home')} onContinue={continueToPayment} />}
-        {screen === 'payment' && <PaymentScreen experience={experience} price={config.price} mode={config.operationMode} environment={config.paymentEnvironment} clientKey={config.midtransClientKey} serverKeyConfigured={config.midtransServerKeyConfigured} onBack={() => setScreen('experience')} onPaymentComplete={paymentComplete} onSkipPayment={skipPayment} />}
-        {screen === 'customer' && <CustomerDetailsScreen email={customerEmail} onEmailChange={setCustomerEmail} onContinue={() => setScreen('frameSelect')} />}
-        {screen === 'frameSelect' && <FrameSelectionScreen experience={experience} frames={compatibleFrames} selectedFrameId={selectedFrameId} onSelectFrame={selectSessionFrame} onBack={() => setScreen('customer')} onContinue={continueToCamera} />}
-        {screen === 'camera' && <CameraScreen experience={experience} frame={sessionFrame} shots={shots} shotLimit={shotLimit} cameraStream={cameraStream} cameraError={cameraError} countdown={countdown} advanceCountdown={advanceCountdown} retakeIndex={retakeIndex} reviewIndex={reviewIndex} capturing={capturing} videoRef={videoRef} onCapture={addShot} onRetakeShot={(index) => addShot(index)} onRetake={resetShots} onContinue={() => setScreen('result')} />}
-        {screen === 'result' && <ResultScreen experience={experience} shots={shots} frame={sessionFrame} onRetake={retryResult} onFinish={finishSession} onSaveFramePreset={saveFrameCropPreset} />}
-        {screen === 'saved' && <SavedScreen sessionCount={sessionCount} deliveryStatus={deliveryStatus} driveLink={driveLink} onHome={() => setScreen('home')} />}
+        {screen === 'maintenance' && <section className="maintenance-page" role="status" aria-live="polite">
+          <span className="maintenance-spinner" aria-hidden="true" />
+          <div className="eyebrow">WEB ADMIN UPDATE</div>
+          <h1>MAINTENANCE MODE</h1>
+          <p>{maintenanceMessage || 'Menyelaraskan konfigurasi booth dan frame terbaru…'}</p>
+        </section>}
+        {screen === 'experience' && <ExperienceScreen experience={experience} photoStripPrice={config.photoStripPrice} singlePhotoPrice={config.singlePhotoPrice} paymentCoveredByEvent={config.operationMode === 'event'} onSelectExperience={selectExperience} onBack={() => setScreen('home')} onContinue={() => setScreen('customer')} />}
+        {screen === 'payment' && <PaymentScreen experience={experience} photoStripPrice={config.photoStripPrice} singlePhotoPrice={config.singlePhotoPrice} mode={config.operationMode} environment={config.paymentEnvironment} clientKey={config.midtransClientKey} serverKeyConfigured={config.midtransServerKeyConfigured} onBack={() => setScreen('customer')} onPaymentComplete={paymentComplete} onSkipPayment={skipPayment} />}
+        {screen === 'customer' && <CustomerDetailsScreen email={customerEmail} onEmailChange={setCustomerEmail} continueLabel={config.operationMode === 'event' ? 'Mulai sesi foto' : paymentStatus ? 'Lanjutkan sesi' : 'Lanjut ke pembayaran'} onBack={() => setScreen('experience')} onContinue={continueToPayment} />}
+        {screen === 'frameSelect' && <FrameSelectionScreen experience={experience} frames={compatibleFrames} selectedFrameId={selectedFrameId} loadingFrame={sessionFrameLoading} onSelectFrame={selectSessionFrame} onContinue={() => { void continueToCamera() }} />}
+        {screen === 'cameraSettings' && <CameraSettingsScreen settings={sessionCameraSettings} cameraStream={cameraStream} cameraError={cameraError} videoRef={videoRef} onChange={setSessionCameraSettings} onBack={() => setScreen('frameSelect')} onContinue={startCamera} />}
+        {screen === 'camera' && <CameraScreen experience={experience} frame={sessionFrame} shots={shots} shotLimit={shotLimit} cameraStream={cameraStream} cameraError={cameraError} countdown={countdown} advanceCountdown={advanceCountdown} recordingSeconds={recordingSeconds} retakeIndex={retakeIndex} reviewIndex={reviewIndex} capturing={capturing} videoRef={videoRef} cameraSettings={sessionCameraSettings} onCapture={addShot} onRetakeShot={(index) => addShot(index)} onRetake={resetShots} onContinue={() => setScreen('result')} />}
+        {screen === 'result' && <ResultScreen experience={experience} printerAutoPrint={config.printerAutoPrint !== 'false'} shots={shots} liveClips={liveClips} frame={sessionFrame} cameraSettings={sessionCameraSettings} onRetake={retryResult} onFinish={finishSession} onSaveFramePreset={saveFrameCropPreset} />}
+        {screen === 'saved' && <SavedScreen sessionCount={sessionCount} deliveryStatus={deliveryStatus} printError={printError} driveLink={driveLink} driveExpiresAt={driveExpiresAt} driveUploadStatus={driveUploadStatus} driveUploadError={driveUploadError} driveRetentionDays={Number(config.googleDriveRetentionDays) || 7} autoReturn={config.operationMode !== 'dev'} previewFiles={savedPreviewFiles} onHome={() => setScreen('home')} />}
         {screen === 'admin' && <AdminPanel activeTab={adminTab} setActiveTab={setAdminTab} config={config} setConfig={setConfig} onSave={saveSettings} sessionCount={sessionCount} onExit={() => setScreen('home')} />}
       </main>
 

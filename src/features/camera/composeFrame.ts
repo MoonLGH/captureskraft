@@ -1,4 +1,5 @@
 import { getFramePhotoIndexes, type BoothFrame, type FrameSlot } from './boothFrames'
+import { DEFAULT_SESSION_CAMERA_SETTINGS, drawImageWithCameraEffects, type SessionCameraSettings } from './cameraEffects'
 
 export type PhotoAdjustment = Pick<FrameSlot, 'imageZoom' | 'imageOffsetX' | 'imageOffsetY'>
 export type PhotoAdjustmentMap = Record<string, PhotoAdjustment>
@@ -18,6 +19,7 @@ export function drawFrameComposition(
   photoBySourceIndex: Map<number, HTMLImageElement>,
   artwork: HTMLImageElement,
   adjustments: PhotoAdjustmentMap = {},
+  cameraSettings: SessionCameraSettings = DEFAULT_SESSION_CAMERA_SETTINGS,
 ) {
   frame.slots.forEach((slot) => {
     const photo = photoBySourceIndex.get(slot.photoIndex)
@@ -39,7 +41,7 @@ export function drawFrameComposition(
     context.beginPath()
     context.rect(-slot.width / 2, -slot.height / 2, slot.width, slot.height)
     context.clip()
-    context.drawImage(photo, -imageWidth / 2 + offsetX, -imageHeight / 2 + offsetY, imageWidth, imageHeight)
+    drawImageWithCameraEffects(context, photo, -imageWidth / 2 + offsetX, -imageHeight / 2 + offsetY, imageWidth, imageHeight, cameraSettings)
     context.restore()
   })
 
@@ -47,7 +49,7 @@ export function drawFrameComposition(
   context.drawImage(artwork, 0, 0, frame.width, frame.height)
 }
 
-export async function composeFrame(shots: string[], frame: BoothFrame, adjustments: PhotoAdjustmentMap = {}): Promise<string> {
+export async function composeFrame(shots: string[], frame: BoothFrame, adjustments: PhotoAdjustmentMap = {}, cameraSettings: SessionCameraSettings = DEFAULT_SESSION_CAMERA_SETTINGS): Promise<string> {
   const canvas = document.createElement('canvas')
   canvas.width = frame.width
   canvas.height = frame.height
@@ -57,10 +59,10 @@ export async function composeFrame(shots: string[], frame: BoothFrame, adjustmen
   const photoIndexes = getFramePhotoIndexes(frame)
   const [artwork, ...photos] = await Promise.all([
     loadImage(frame.dataUrl),
-    ...photoIndexes.slice(0, shots.length).map((photoIndex, index) => loadImage(shots[index])),
+    ...photoIndexes.slice(0, shots.length).map((_, index) => loadImage(shots[index])),
   ])
   const photoBySourceIndex = new Map(photoIndexes.slice(0, photos.length).map((photoIndex, index) => [photoIndex, photos[index]]))
-  drawFrameComposition(context, frame, photoBySourceIndex, artwork, adjustments)
+  drawFrameComposition(context, frame, photoBySourceIndex, artwork, adjustments, cameraSettings)
 
   return canvas.toDataURL('image/png')
 }

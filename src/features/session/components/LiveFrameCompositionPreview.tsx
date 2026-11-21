@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import type { Experience } from '../../../types/app'
 import { getFramePhotoIndexes, type BoothFrame } from '../../camera/boothFrames'
+import { DEFAULT_SESSION_CAMERA_SETTINGS, drawImageWithCameraEffects, type SessionCameraSettings } from '../../camera/cameraEffects'
 
 type PreviewAssets = { artwork: HTMLImageElement; photos: Map<number, HTMLImageElement> }
 
@@ -16,13 +17,14 @@ function loadImage(source: string) {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
-export function LiveFrameCompositionPreview({ frame, shots, experience, videoRef, retakePhotoIndex, onPreviewWidthChange }: {
+export function LiveFrameCompositionPreview({ frame, shots, experience, videoRef, retakePhotoIndex, onPreviewWidthChange, cameraSettings = DEFAULT_SESSION_CAMERA_SETTINGS }: {
   frame: BoothFrame
   shots: string[]
   experience: Experience
   videoRef: RefObject<HTMLVideoElement | null>
   retakePhotoIndex: number | null
   onPreviewWidthChange: (width: number) => void
+  cameraSettings?: SessionCameraSettings
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
@@ -111,7 +113,7 @@ export function LiveFrameCompositionPreview({ frame, shots, experience, videoRef
           context.rect(-slot.width / 2, -slot.height / 2, slot.width, slot.height)
           context.clip()
           if (useLiveVideo) context.scale(-1, 1)
-          context.drawImage(source, -imageWidth / 2 + offsetX, -imageHeight / 2 + offsetY, imageWidth, imageHeight)
+          drawImageWithCameraEffects(context, source, -imageWidth / 2 + offsetX, -imageHeight / 2 + offsetY, imageWidth, imageHeight, cameraSettings)
           context.restore()
         })
 
@@ -126,10 +128,10 @@ export function LiveFrameCompositionPreview({ frame, shots, experience, videoRef
       active = false
       window.cancelAnimationFrame(animation)
     }
-  }, [assets, frame, videoRef])
+  }, [assets, cameraSettings, frame, videoRef])
 
   const scale = viewportSize.width && viewportSize.height
-    ? Math.min(viewportSize.width / frame.width, viewportSize.height / frame.height)
+    ? Math.min(viewportSize.width / frame.width, viewportSize.height / frame.height) * 1.15
     : 0
   useEffect(() => {
     onPreviewWidthChange(frame.width * scale)
@@ -140,20 +142,25 @@ export function LiveFrameCompositionPreview({ frame, shots, experience, videoRef
   return <div className="live-frame-preview-viewport" style={stageStyle}>
     <div className="live-frame-preview-stage" style={stageStyle}>
       <canvas ref={canvasRef} aria-label={`Preview ${frame.name} dengan hasil foto di slot`} />
-      {frame.slots.map((slot, index) => <div
-        className="live-frame-slot-guide"
-        key={slot.id}
-        role="img"
-        aria-label={`Slot ${index + 1}, foto ${experience === 'single' ? 1 : sourceIndexes.indexOf(slot.photoIndex) + 1}`}
-        style={{
-          left: `${(slot.x / frame.width) * 100}%`,
-          top: `${(slot.y / frame.height) * 100}%`,
-          width: `${(slot.width / frame.width) * 100}%`,
-          height: `${(slot.height / frame.height) * 100}%`,
-          transform: `rotate(${slot.rotation}deg)`,
-          zIndex: index + 1,
-        }}
-      ><span>{experience === 'single' ? 1 : sourceIndexes.indexOf(slot.photoIndex) + 1}</span></div>)}
+      {frame.slots.map((slot, index) => {
+        const sourceIndex = sourceIndexes.indexOf(slot.photoIndex)
+        const shotIndex = experience === 'single' ? 0 : sourceIndex
+        const photoTaken = shotIndex >= 0 && Boolean(shots[shotIndex]) && retakePhotoIndex !== shotIndex
+        return <div
+          className="live-frame-slot-guide"
+          key={slot.id}
+          role="img"
+          aria-label={`Slot ${index + 1}, foto ${experience === 'single' ? 1 : sourceIndex + 1}`}
+          style={{
+            left: `${(slot.x / frame.width) * 100}%`,
+            top: `${(slot.y / frame.height) * 100}%`,
+            width: `${(slot.width / frame.width) * 100}%`,
+            height: `${(slot.height / frame.height) * 100}%`,
+            transform: `rotate(${slot.rotation}deg)`,
+            zIndex: index + 1,
+          }}
+        >{!photoTaken && <span>{shotIndex + 1}</span>}</div>
+      })}
     </div>
   </div>
 }
