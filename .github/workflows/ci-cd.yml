@@ -1,0 +1,104 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  webadmin-build:
+    name: Build WebAdmin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webadmin/package-lock.json
+
+      - name: Install WebAdmin dependencies
+        run: npm ci --prefix webadmin
+
+      - name: Build WebAdmin
+        run: npm run build --prefix webadmin
+
+      - name: Save WebAdmin build
+        uses: actions/upload-artifact@v4
+        with:
+          name: webadmin-dist-${{ github.sha }}
+          path: webadmin/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy-webadmin:
+    name: Update Vercel production branch
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: webadmin-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: vercel-production
+      cancel-in-progress: false
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download WebAdmin build
+        uses: actions/download-artifact@v4
+        with:
+          name: webadmin-dist-${{ github.sha }}
+          path: webadmin/dist/
+
+      - name: Push deployment snapshot to vercel branch
+        shell: bash
+        run: |
+          git switch --orphan vercel
+          git add --all --force
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "Deploy WebAdmin from ${GITHUB_SHA}"
+          git push --force origin HEAD:vercel
+
+  electron-windows:
+    name: Build Windows installer and ZIP
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Build Windows packages
+        run: npm run dist:win
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: capturs-windows-${{ github.sha }}
+          path: |
+            release/*.exe
+            release/*.zip
+          if-no-files-found: error
+          retention-days: 30

@@ -19,6 +19,7 @@ import { DEFAULT_SESSION_CAMERA_SETTINGS, type SessionCameraSettings } from '../
 import { cameraTrackConstraints, parseCameraSettings, parseLegacyBoothFrame, serializeCameraSettings } from '../features/camera/cameraSettings'
 import { getFramePhotoIndexes, isFullBoothFrameDataUrl, parseBoothFrames, serializeBoothFrameManifest } from '../features/camera/boothFrames'
 import type { BoothFrame, BoothFrameAssetUpload } from '../features/camera/boothFrames'
+import { playButtonClickSound, playTimerFotoSound, stopTimerFotoSound } from '../utils/sounds'
 
 function normalizeStoredConfig(stored: Partial<Config>): Partial<Config> {
   const parsedFrames = parseBoothFrames(stored.boothFrames)
@@ -127,6 +128,7 @@ function App() {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null)
   const [cameraError, setCameraError] = useState('')
   const [countdown, setCountdown] = useState<number | null>(null)
+  const [shutterFlash, setShutterFlash] = useState(false)
   const [advanceCountdown, setAdvanceCountdown] = useState<number | null>(null)
   const [retakeIndex, setRetakeIndex] = useState<number | null>(null)
   const [reviewIndex, setReviewIndex] = useState<number | null>(null)
@@ -139,8 +141,9 @@ function App() {
   const sessionFrameRequestRef = useRef(0)
   const configLoadedRef = useRef(false)
   const captureTimer = useRef<number | undefined>(undefined)
+  const shutterFlashStartTimer = useRef<number | undefined>(undefined)
+  const shutterFlashTimer = useRef<number | undefined>(undefined)
   const advanceTimer = useRef<number | undefined>(undefined)
-  const recordingTimer = useRef<number | undefined>(undefined)
   const activeRecorderRef = useRef<MediaRecorder | null>(null)
   const captureGenerationRef = useRef(0)
   const sessionStartedAtRef = useRef(0)
@@ -162,6 +165,20 @@ function App() {
   useEffect(() => {
     if (screen !== 'saved') setSavedPreviewFiles(null)
   }, [screen])
+
+  useEffect(() => {
+    const playForProgressButton = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return
+      const button = event.target.closest('button')
+      if (!button || !button.matches('.primary-cta, .checkout-skip-button')) return
+      const label = `${button.getAttribute('aria-label') ?? ''} ${button.textContent ?? ''}`.trim()
+      if (/\bkembali\b/i.test(label)) return
+      playButtonClickSound()
+    }
+
+    document.addEventListener('click', playForProgressButton, true)
+    return () => document.removeEventListener('click', playForProgressButton, true)
+  }, [])
 
   useEffect(() => window.boothConfig?.onTelegramChatId?.((chatId) => {
     setConfig((current) => ({ ...current, telegramChatId: chatId }))
@@ -423,7 +440,9 @@ function App() {
   useEffect(() => () => {
     window.clearInterval(captureTimer.current)
     window.clearInterval(advanceTimer.current)
-    window.clearInterval(recordingTimer.current)
+    window.clearTimeout(shutterFlashStartTimer.current)
+    window.clearTimeout(shutterFlashTimer.current)
+    stopTimerFotoSound()
     if (activeRecorderRef.current?.state !== 'inactive') activeRecorderRef.current?.stop()
   }, [])
 
@@ -431,14 +450,18 @@ function App() {
     if (screen === 'camera') return
     window.clearInterval(captureTimer.current)
     window.clearInterval(advanceTimer.current)
-    window.clearInterval(recordingTimer.current)
+    window.clearTimeout(shutterFlashStartTimer.current)
+    window.clearTimeout(shutterFlashTimer.current)
+    stopTimerFotoSound()
     captureGenerationRef.current += 1
     if (activeRecorderRef.current?.state !== 'inactive') activeRecorderRef.current?.stop()
     activeRecorderRef.current = null
     captureTimer.current = undefined
+    shutterFlashStartTimer.current = undefined
+    shutterFlashTimer.current = undefined
     advanceTimer.current = undefined
-    recordingTimer.current = undefined
     setCountdown(null)
+    setShutterFlash(false)
     setAdvanceCountdown(null)
     setRetakeIndex(null)
     setReviewIndex(null)
@@ -461,10 +484,13 @@ function App() {
   const clearCaptureTimers = () => {
     window.clearInterval(captureTimer.current)
     window.clearInterval(advanceTimer.current)
-    window.clearInterval(recordingTimer.current)
+    window.clearTimeout(shutterFlashStartTimer.current)
+    window.clearTimeout(shutterFlashTimer.current)
+    stopTimerFotoSound()
     captureTimer.current = undefined
+    shutterFlashStartTimer.current = undefined
+    shutterFlashTimer.current = undefined
     advanceTimer.current = undefined
-    recordingTimer.current = undefined
   }
 
   const resetShots = () => {
@@ -475,6 +501,7 @@ function App() {
     setShots([])
     setLiveClips([])
     setCountdown(null)
+    setShutterFlash(false)
     setAdvanceCountdown(null)
     setRetakeIndex(null)
     setReviewIndex(null)
@@ -508,21 +535,48 @@ function App() {
       setAdvanceCountdown(null)
       setReviewIndex(null)
     }
+    playTimerFotoSound()
     setCapturing(true)
     setRetakeIndex(targetIndex ?? null)
     setCountdown(5)
+    setShutterFlash(false)
+    setRecordingSeconds(null)
     const captureIndex = targetIndex ?? shots.length
     const captureGeneration = captureGenerationRef.current
     let remaining = 5
+    let clipPromise: Promise<Uint8Array | null> = Promise.resolve(null)
     const timer = window.setInterval(() => {
       remaining -= 1
-      if (remaining > 2) {
+      if (remaining > 0) {
         setCountdown(remaining)
+        if (remaining === 1) {
+          window.clearTimeout(shutterFlashStartTimer.current)
+          shutterFlashStartTimer.current = window.setTimeout(() => {
+            setShutterFlash(true)
+            shutterFlashStartTimer.current = undefined
+          }, 755)
+        }
+        if (cameraStream && remaining <= 3) setRecordingSeconds(remaining)
+        if (cameraStream && remaining === 3) {
+          clipPromise = recordCameraClip(cameraStream, (recorder) => { activeRecorderRef.current = recorder }).then((clip) => clip, (error) => {
+            setToast(error instanceof Error ? error.message : 'Live Photo gagal direkam.')
+            return null
+          })
+        }
         return
       }
       window.clearInterval(timer)
       captureTimer.current = undefined
-      setCountdown(2)
+      window.clearTimeout(shutterFlashStartTimer.current)
+      shutterFlashStartTimer.current = undefined
+      setCountdown(null)
+      setRecordingSeconds(null)
+      window.clearTimeout(shutterFlashTimer.current)
+      setShutterFlash(true)
+      shutterFlashTimer.current = window.setTimeout(() => {
+        setShutterFlash(false)
+        shutterFlashTimer.current = undefined
+      }, 200)
       const video = videoRef.current
       let image = makeDemoShot(captureIndex + 1)
       if (cameraStream && video && video.videoWidth > 0) {
@@ -538,31 +592,9 @@ function App() {
         }
       }
 
-      setCountdown(null)
-      setRecordingSeconds(cameraStream ? 3 : null)
-      if (cameraStream) {
-        let seconds = 3
-        recordingTimer.current = window.setInterval(() => {
-          seconds -= 1
-          setRecordingSeconds(seconds > 0 ? seconds : null)
-          if (seconds <= 0) {
-            window.clearInterval(recordingTimer.current)
-            recordingTimer.current = undefined
-          }
-        }, 1000)
-      }
-
-      const clipPromise = cameraStream
-        ? recordCameraClip(cameraStream, (recorder) => { activeRecorderRef.current = recorder }).then((clip) => clip, (error) => {
-          setToast(error instanceof Error ? error.message : 'Live Photo gagal direkam.')
-          return null
-        })
-        : Promise.resolve(null)
       void clipPromise.then((clip) => {
         if (captureGeneration !== captureGenerationRef.current) return
         activeRecorderRef.current = null
-        window.clearInterval(recordingTimer.current)
-        recordingTimer.current = undefined
         setRecordingSeconds(null)
         setShots((current) => {
           if (targetIndex === undefined) return [...current, image]
@@ -930,7 +962,7 @@ function App() {
         {screen === 'customer' && <CustomerDetailsScreen email={customerEmail} onEmailChange={setCustomerEmail} continueLabel={config.operationMode === 'event' ? 'Mulai sesi foto' : paymentStatus ? 'Lanjutkan sesi' : 'Lanjut ke pembayaran'} onBack={() => setScreen('experience')} onContinue={continueToPayment} />}
         {screen === 'frameSelect' && <FrameSelectionScreen experience={experience} frames={compatibleFrames} selectedFrameId={selectedFrameId} loadingFrame={sessionFrameLoading} onSelectFrame={selectSessionFrame} onContinue={() => { void continueToCamera() }} />}
         {screen === 'cameraSettings' && <CameraSettingsScreen settings={sessionCameraSettings} cameraStream={cameraStream} cameraError={cameraError} videoRef={videoRef} onChange={setSessionCameraSettings} onBack={() => setScreen('frameSelect')} onContinue={startCamera} />}
-        {screen === 'camera' && <CameraScreen experience={experience} frame={sessionFrame} shots={shots} shotLimit={shotLimit} cameraStream={cameraStream} cameraError={cameraError} countdown={countdown} advanceCountdown={advanceCountdown} recordingSeconds={recordingSeconds} retakeIndex={retakeIndex} reviewIndex={reviewIndex} capturing={capturing} videoRef={videoRef} cameraSettings={sessionCameraSettings} onCapture={addShot} onRetakeShot={(index) => addShot(index)} onRetake={resetShots} onContinue={() => setScreen('result')} />}
+        {screen === 'camera' && <CameraScreen experience={experience} frame={sessionFrame} shots={shots} shotLimit={shotLimit} cameraStream={cameraStream} cameraError={cameraError} countdown={countdown} shutterFlash={shutterFlash} advanceCountdown={advanceCountdown} recordingSeconds={recordingSeconds} retakeIndex={retakeIndex} reviewIndex={reviewIndex} capturing={capturing} videoRef={videoRef} cameraSettings={sessionCameraSettings} onCapture={addShot} onRetakeShot={(index) => addShot(index)} onRetake={resetShots} onContinue={() => setScreen('result')} />}
         {screen === 'result' && <ResultScreen experience={experience} printerAutoPrint={config.printerAutoPrint !== 'false'} shots={shots} liveClips={liveClips} frame={sessionFrame} cameraSettings={sessionCameraSettings} onRetake={retryResult} onFinish={finishSession} onSaveFramePreset={saveFrameCropPreset} />}
         {screen === 'saved' && <SavedScreen sessionCount={sessionCount} deliveryStatus={deliveryStatus} printError={printError} driveLink={driveLink} driveExpiresAt={driveExpiresAt} driveUploadStatus={driveUploadStatus} driveUploadError={driveUploadError} driveRetentionDays={Number(config.googleDriveRetentionDays) || 7} autoReturn={config.operationMode !== 'dev'} previewFiles={savedPreviewFiles} onHome={() => setScreen('home')} />}
         {screen === 'admin' && <AdminPanel activeTab={adminTab} setActiveTab={setAdminTab} config={config} setConfig={setConfig} onSave={saveSettings} sessionCount={sessionCount} onExit={() => setScreen('home')} />}

@@ -14,6 +14,7 @@ type CameraScreenProps = {
   cameraStream: MediaStream | null
   cameraError: string
   countdown: number | null
+  shutterFlash: boolean
   advanceCountdown: number | null
   recordingSeconds: number | null
   retakeIndex: number | null
@@ -27,7 +28,7 @@ type CameraScreenProps = {
   onContinue: () => void
 }
 
-export function CameraScreen({ experience, frame, shots, shotLimit, cameraStream, cameraError, countdown, advanceCountdown, recordingSeconds, retakeIndex, reviewIndex, capturing, videoRef, cameraSettings = DEFAULT_SESSION_CAMERA_SETTINGS, onCapture, onRetakeShot, onRetake, onContinue }: CameraScreenProps) {
+export function CameraScreen({ experience, frame, shots, shotLimit, cameraStream, cameraError, countdown, shutterFlash, advanceCountdown, recordingSeconds, retakeIndex, reviewIndex, capturing, videoRef, cameraSettings = DEFAULT_SESSION_CAMERA_SETTINGS, onCapture, onRetakeShot, onRetake, onContinue }: CameraScreenProps) {
   const [framePreviewWidth, setFramePreviewWidth] = useState(0)
   const isReviewingShot = advanceCountdown !== null && reviewIndex !== null
   const nextShotLabel = `Ambil foto ${shots.length + 1}`
@@ -35,25 +36,26 @@ export function CameraScreen({ experience, frame, shots, shotLimit, cameraStream
   const shutterLabel = capturing
     ? retakeIndex !== null ? `Mengulang foto ${retakeIndex + 1}…` : `Mengambil foto ${shots.length + 1}…`
     : isReviewingShot ? `Ambil ulang foto ${reviewIndex + 1}` : nextShotLabel
-  const statusTitle = recordingSeconds !== null
-    ? 'LIVE PHOTO SEDANG DIREKAM'
-    : capturing
+  const statusTitle = capturing
     ? shutterLabel
     : isReviewingShot ? `Ambil ulang foto ${reviewIndex + 1}?` : null
-  const statusCountdown = recordingSeconds ?? countdown ?? (isReviewingShot ? advanceCountdown : null)
+  const statusCountdown = countdown ?? (isReviewingShot ? advanceCountdown : null)
+  const reviewPhoto = reviewIndex !== null ? shots[reviewIndex] : undefined
 
   return (
     <section className="camera-page">
+      {shutterFlash && <div className="camera-shutter-flash" aria-hidden="true" />}
       <div className="camera-layout">
         <div className="camera-view">
           {cameraStream
             ? <video ref={videoRef} autoPlay playsInline muted className="camera-video" style={{ filter: cameraPreviewCss(cameraSettings) }} />
             : <div className="camera-placeholder"><PhotoIllustration /><div className="placeholder-label"><Camera size={16} /> {cameraError || 'Menyiapkan kamera…'}</div></div>}
-          {statusTitle && <div className="countdown-overlay" aria-live="polite" aria-atomic="true">
+          {statusTitle && <div className={`countdown-overlay ${isReviewingShot ? 'review-countdown-overlay' : ''}`} aria-live="polite" aria-atomic="true">
             <div className="camera-status-title">{statusTitle}</div>
+            {isReviewingShot && reviewPhoto && <div className="camera-review-preview"><img src={reviewPhoto} alt={`Pratinjau hasil foto ${reviewIndex + 1}`} /></div>}
             {statusCountdown !== null && <strong className="camera-countdown-number">{statusCountdown}</strong>}
-            {recordingSeconds !== null && <div className="camera-status-hint">rekaman Live Photo 3 detik</div>}
-            {isReviewingShot && <div className="camera-status-hint">tekan shutter button untuk retake</div>}
+            {recordingSeconds !== null && <div className="camera-status-hint">Live Photo sedang direkam</div>}
+            {isReviewingShot && <div className="camera-status-hint">Tekan shutter untuk ambil ulang, atau tunggu untuk lanjut otomatis</div>}
           </div>}
         </div>
 

@@ -60,3 +60,9 @@ App memeriksa revisi cloud tiap 8–10 detik, termasuk selama sesi, tetapi tidak
 Bot Telegram berjalan langsung di Electron dari kode `tele/bot.cjs`; tidak perlu host worker atau encryption key tambahan. Operator memasukkan token di **Admin → Sinkronisasi cloud**, simpan, lalu kirim `/id` ke bot dari chat tujuan. App menyimpan Chat ID otomatis; tujuan log dapat dilihat dan diubah di **WebAdmin → Telegram**. Token terenkripsi hanya di perangkat. WebAdmin hanya menerima Chat ID dan menyimpan antrean log sesi, pembayaran, aktivitas booth, perubahan pengaturan/perangkat, dan perubahan frame. Electron mengirim antrean saat aplikasi berjalan dan tersambung ke WebAdmin; log tertunda dikirim saat booth online kembali.
 
 File `.env.example` memberi nama variabel untuk pengembangan lokal. Data MongoDB hanya diakses function server, cookie admin bersifat `HttpOnly`, private key identitas booth dienkripsi memakai `safeStorage`, dan catatan transaksi cloud menyimpan email pelanggan serta tautan folder Google Drive.
+
+### GitHub Actions dan paket release
+
+Workflow `.github/workflows/ci-cd.yml` menjalankan build WebAdmin dan paket Windows Electron pada setiap push ke `main`; pull request ke `main` menjalankan build tanpa mengubah branch deployment. Build WebAdmin dikirim bersama snapshot source ke branch `vercel`. Atur **Production Branch** Vercel ke `vercel` dan **Root Directory** ke `webadmin`; push dari GitHub Actions kemudian memicu deployment production Vercel. Push ke `vercel` tidak memicu workflow ini.
+
+Build Electron menghasilkan installer Windows `.exe` dan paket `.zip`. Keduanya tersedia di **Actions → CI/CD → run terkait → Artifacts** selama 30 hari. Job deployment memerlukan izin `contents: write` untuk `GITHUB_TOKEN`; jika branch `vercel` dilindungi ruleset, izinkan workflow memperbarui branch tersebut. Variabel lingkungan MongoDB, admin, dan session tetap diatur di Vercel seperti di atas.
