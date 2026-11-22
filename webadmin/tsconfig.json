@@ -12,7 +12,12 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "types": ["vite/client", "node"]
+    "types": ["vite/client", "node"],
+    "paths": {
+      "react": ["./node_modules/@types/react/index.d.ts"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "lucide-react": ["./node_modules/lucide-react/dist/lucide-react.d.ts"]
+    }
   },
   "include": ["src", "api", "server.ts", "vite.config.ts"]
 }

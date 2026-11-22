@@ -1,4 +1,4 @@
-import { database, ensureSettings, json, methodNotAllowed, requireAdmin, type VercelRequest, type VercelResponse } from '../server'
+import { database, ensureSettings, json, methodNotAllowed, requireAdmin, stringIdCollection, type VercelRequest, type VercelResponse } from '../server'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return methodNotAllowed(res, ['GET'])
@@ -16,7 +16,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter((row) => typeof row.sessionId === 'string' && row.sessionId)
       .map((row) => `${String(row.deviceId)}:${row.sessionId}`)
     const relatedSessionRows = relatedSessionKeys.length
-      ? await db.collection('sessions').find({ _id: { $in: relatedSessionKeys }, storeId: settings.storeId }).toArray()
+      ? await stringIdCollection(db, 'sessions').find({ _id: { $in: relatedSessionKeys }, storeId: settings.storeId }).toArray()
       : []
     const relatedSessions = new Map(relatedSessionRows.map((row) => [`${String(row.deviceId)}:${row.sessionId}`, row]))
     const deviceNames = new Map(deviceRows.map((device) => [String(device._id), String(device.name)]))

@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'node:http'
+import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { MAX_API_BODY_BYTES } from './configLimits'
@@ -153,6 +154,13 @@ export default defineConfig(({ mode }) => {
   Object.assign(process.env, loadEnv(mode, process.cwd(), ''))
   return {
     plugins: [react(), localApiPlugin()],
+    resolve: {
+      alias: {
+        react: fileURLToPath(new URL('./node_modules/react', import.meta.url)),
+        'lucide-react': fileURLToPath(new URL('./node_modules/lucide-react', import.meta.url)),
+      },
+      dedupe: ['react', 'react-dom'],
+    },
     server: { host: '127.0.0.1', port: 4114, strictPort: true },
     preview: { host: '127.0.0.1', port: 4114, strictPort: true },
   }

@@ -473,9 +473,11 @@ export async function saveEmailSettings(db: Db, input: Record<string, unknown>, 
 
   const smtpHost = typeof input.smtpHost === 'string' ? input.smtpHost.trim() : current.smtpHost
   const smtpPort = input.smtpPort === undefined ? current.smtpPort : Number(input.smtpPort)
-  const smtpSecure = input.smtpSecure === undefined ? current.smtpSecure : input.smtpSecure
+  const smtpSecure = mode === 'gmail'
+    ? true
+    : input.smtpSecure === undefined ? current.smtpSecure : input.smtpSecure
+  if (typeof smtpSecure !== 'boolean') throw new Error('Pengaturan keamanan SMTP tidak valid.')
   if (mode === 'smtp') {
-    if (typeof smtpSecure !== 'boolean') throw new Error('Pengaturan keamanan SMTP tidak valid.')
     if (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) throw new Error('Port SMTP harus berupa angka antara 1 dan 65535.')
     if (smtpPort === 25) throw new Error('Vercel memblokir port SMTP 25. Gunakan port 465, 587, atau port lain dari penyedia email.')
     if (smtpHost.length > 253 || /[\s/]/.test(smtpHost)) throw new Error('SMTP Host tidak valid.')
@@ -501,7 +503,7 @@ export async function saveEmailSettings(db: Db, input: Record<string, unknown>, 
     mode,
     smtpHost: mode === 'gmail' ? 'smtp.gmail.com' : smtpHost,
     smtpPort: mode === 'gmail' ? 465 : smtpPort,
-    smtpSecure: mode === 'gmail' ? true : smtpSecure,
+    smtpSecure,
     fromName,
     fromAddress,
     usernameEncrypted,
